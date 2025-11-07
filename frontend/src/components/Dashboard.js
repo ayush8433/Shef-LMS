@@ -16,7 +16,7 @@ const Dashboard = ({ user, onLogout }) => {
   // Complete Course Curriculum - Cyber Security & Ethical Hacking
   const courseData = {
     title: 'Cyber Security & Ethical Hacking',
-    duration: '10 months',
+    duration: '6 months',
     modules: 10,
     progress: 0,
     lessons: '0/520',

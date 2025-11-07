@@ -72,7 +72,7 @@ router.post('/login', async (req, res) => {
         enrollmentDate: '2025-11-07',
         enrollmentNumber: 'SU-2025-001',
         currentCourse: 'Cyber Security & Ethical Hacking',
-        courseDuration: '10 months'
+        courseDuration: '6 months'
       };
 
       const payload = {
