@@ -23,7 +23,8 @@ export const COLLECTIONS = {
   JOBS: 'jobs',
   MENTORS: 'mentors',
   STATS: 'stats',
-  CONTENT: 'content'
+  CONTENT: 'content',
+  CLASSROOM: 'classroom'
 };
 
 // Generic CRUD operations

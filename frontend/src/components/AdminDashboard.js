@@ -19,6 +19,7 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [assessments, setAssessments] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [mentors, setMentors] = useState([]);
+  const [classroomVideos, setClassroomVideos] = useState([]);
   const [stats, setStats] = useState({});
   
   // Modal states
@@ -43,7 +44,8 @@ const AdminDashboard = ({ user, onLogout }) => {
         projectsRes,
         assessmentsRes,
         jobsRes,
-        mentorsRes
+        mentorsRes,
+        classroomRes
       ] = await Promise.all([
         firebaseService.getAll(COLLECTIONS.USERS, [where('role', '==', 'student')]),
         firebaseService.getAll(COLLECTIONS.COURSES),
@@ -52,7 +54,8 @@ const AdminDashboard = ({ user, onLogout }) => {
         firebaseService.getAll(COLLECTIONS.PROJECTS),
         firebaseService.getAll(COLLECTIONS.ASSESSMENTS),
         firebaseService.getAll(COLLECTIONS.JOBS),
-        firebaseService.getAll(COLLECTIONS.MENTORS)
+        firebaseService.getAll(COLLECTIONS.MENTORS),
+        firebaseService.getAll(COLLECTIONS.CLASSROOM)
       ]);
 
       if (studentsRes.success) setStudents(studentsRes.data); else setStudents([]);
@@ -63,6 +66,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       if (assessmentsRes.success) setAssessments(assessmentsRes.data); else setAssessments([]);
       if (jobsRes.success) setJobs(jobsRes.data); else setJobs([]);
       if (mentorsRes.success) setMentors(mentorsRes.data); else setMentors([]);
+      if (classroomRes.success) setClassroomVideos(classroomRes.data); else setClassroomVideos([]);
 
       // Calculate stats using safe fallbacks
       calculateStats(studentsRes.success ? studentsRes.data : [], coursesRes.success ? coursesRes.data : [], jobsRes.success ? jobsRes.data : []);
@@ -114,7 +118,8 @@ const AdminDashboard = ({ user, onLogout }) => {
       assessment: { title: '', description: '', questions: 0, duration: '', difficulty: 'Medium', passingScore: 70 },
       job: { title: '', company: '', location: 'Remote', salary: '', type: 'Full-time', status: 'active', skills: [], description: '' },
       mentor: { name: '', title: '', company: '', experience: '', skills: [], bio: '', email: '', linkedin: '' },
-      content: { type: 'announcement', title: '', content: '', targetAudience: 'all', priority: 'normal' }
+      content: { type: 'announcement', title: '', content: '', targetAudience: 'all', priority: 'normal' },
+      classroom: { title: '', date: '', instructor: '', duration: '', driveId: '', courseType: 'Cyber Security', type: 'Live Class' }
     };
     return defaults[type] || {};
   };
@@ -238,6 +243,14 @@ const AdminDashboard = ({ user, onLogout }) => {
         }
       }
 
+      // Validate classroom fields
+      if (modalType === 'classroom') {
+        if (!formData.title || !formData.driveId || !formData.instructor) {
+          showToast('Please fill in required fields (Title, Google Drive ID, Instructor)', 'warning');
+          return;
+        }
+      }
+
       const collection = {
         student: COLLECTIONS.USERS,
         course: COLLECTIONS.COURSES,
@@ -247,7 +260,8 @@ const AdminDashboard = ({ user, onLogout }) => {
         assessment: COLLECTIONS.ASSESSMENTS,
         job: COLLECTIONS.JOBS,
         mentor: COLLECTIONS.MENTORS,
-        content: COLLECTIONS.CONTENT
+        content: COLLECTIONS.CONTENT,
+        classroom: COLLECTIONS.CLASSROOM
       }[modalType];
 
       let result;
@@ -301,14 +315,11 @@ const AdminDashboard = ({ user, onLogout }) => {
   return (
     <div className="admin-dashboard">
       {/* Sidebar */}
-      <aside className={`admin-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+      <aside className="admin-sidebar open">
         <div className="sidebar-header">
           <div className="logo">
             <img src="/Shef_logo.png" alt="SHEF" className="logo-image" />
           </div>
-          <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            ☰
-          </button>
         </div>
 
         <nav className="sidebar-nav">
@@ -346,6 +357,13 @@ const AdminDashboard = ({ user, onLogout }) => {
           >
             <span className="icon">📝</span>
             <span>Lessons</span>
+          </button>
+          <button 
+            className={`nav-item ${activeSection === 'classroom' ? 'active' : ''}`}
+            onClick={() => setActiveSection('classroom')}
+          >
+            <span className="icon">🎥</span>
+            <span>Classroom</span>
           </button>
           <button 
             className={`nav-item ${activeSection === 'projects' ? 'active' : ''}`}
@@ -399,24 +417,14 @@ const AdminDashboard = ({ user, onLogout }) => {
         </div>
       </aside>
 
-      <div
-        className={`admin-sidebar-overlay ${sidebarOpen ? 'visible' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-      ></div>
+
 
       {/* Main Content */}
-      <main className={`admin-main-content ${sidebarOpen ? 'sidebar-open' : 'sidebar-collapsed'}`}>
+      <main className="admin-main-content sidebar-open">
         {/* Top Header */}
         <header className="admin-top-header">
           <div className="header-left">
-            <button
-              className="mobile-menu-btn"
-              onClick={() => setSidebarOpen(prev => !prev)}
-              aria-label="Toggle navigation"
-            >
-              ☰
-            </button>
-            <img src="/Shef_logo.png" alt="SHEF" className="header-logo" />
+            <h1 className="page-title">Admin Dashboard</h1>
           </div>
           <div className="header-right">
             <div className="user-menu">
@@ -871,6 +879,84 @@ const AdminDashboard = ({ user, onLogout }) => {
                 ))}
               </div>
               {mentors.length === 0 && <p className="no-data">No mentors found. Add industry mentors!</p>}
+            </div>
+          )}
+
+          {/* Classroom Videos Section */}
+          {activeSection === 'classroom' && (
+            <div className="admin-section">
+              <div className="section-header">
+                <h2>Manage Classroom Videos</h2>
+                <button onClick={() => openModal('classroom')} className="btn-add">
+                  ➕ Add Video
+                </button>
+              </div>
+
+              <div className="info-box">
+                <p>📹 Add live class recordings from Google Drive. Students can watch these videos in their Classroom section.</p>
+                <p><strong>How to get Drive ID:</strong> Open your video in Google Drive → Click Share → Copy the ID from the URL (e.g., https://drive.google.com/file/d/<strong>YOUR_DRIVE_ID</strong>/view)</p>
+              </div>
+
+              <div className="data-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Topic</th>
+                      <th>Instructor</th>
+                      <th>Duration</th>
+                      <th>Course</th>
+                      <th>Drive ID</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {classroomVideos.length === 0 ? (
+                      <tr>
+                        <td colSpan="7" style={{textAlign: 'center', padding: '40px', color: '#888'}}>
+                          No classroom videos added yet. Click "Add Video" to add your first recording.
+                        </td>
+                      </tr>
+                    ) : (
+                      classroomVideos
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .map(video => (
+                          <tr key={video.id}>
+                            <td>{video.date}</td>
+                            <td><strong>{video.title}</strong></td>
+                            <td>
+                              <span className="instructor-badge">{video.instructor}</span>
+                            </td>
+                            <td>{video.duration}</td>
+                            <td>
+                              <span className={`course-badge ${video.courseType?.includes('Cyber') ? 'cyber' : 'data'}`}>
+                                {video.courseType || 'General'}
+                              </span>
+                            </td>
+                            <td>
+                              <code className="drive-id">{video.driveId?.substring(0, 15)}...</code>
+                            </td>
+                            <td>
+                              <div className="action-btns">
+                                <button onClick={() => openModal('classroom', video)} className="btn-edit" title="Edit">✏️</button>
+                                <button onClick={() => handleDelete(COLLECTIONS.CLASSROOM, video.id)} className="btn-delete" title="Delete">🗑️</button>
+                                <a 
+                                  href={`https://drive.google.com/file/d/${video.driveId}/view`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="btn-view"
+                                  title="Preview"
+                                >
+                                  👁️
+                                </a>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -1585,6 +1671,67 @@ const AdminDashboard = ({ user, onLogout }) => {
                     onChange={(e) => handleInputChange('bio', e.target.value)}
                     rows="4"
                   />
+                </>
+              )}
+
+              {modalType === 'classroom' && (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Video Title / Topic Name *"
+                    value={formData.title || ''}
+                    onChange={(e) => handleInputChange('title', e.target.value)}
+                    required
+                  />
+                  <input
+                    type="text"
+                    placeholder="Google Drive Video ID *"
+                    value={formData.driveId || ''}
+                    onChange={(e) => handleInputChange('driveId', e.target.value)}
+                    required
+                  />
+                  <small style={{color: '#888', marginTop: '-10px', display: 'block'}}>
+                    Enter the Google Drive file ID (e.g., 1ABCdef123_xyz from the share link)
+                  </small>
+                  <input
+                    type="text"
+                    placeholder="Instructor Name *"
+                    value={formData.instructor || ''}
+                    onChange={(e) => handleInputChange('instructor', e.target.value)}
+                    required
+                  />
+                  <input
+                    type="text"
+                    placeholder="Video Duration (e.g., 45 mins)"
+                    value={formData.duration || ''}
+                    onChange={(e) => handleInputChange('duration', e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    placeholder="Session Date"
+                    value={formData.date || ''}
+                    onChange={(e) => handleInputChange('date', e.target.value)}
+                  />
+                  <select
+                    value={formData.course || 'Data Science'}
+                    onChange={(e) => handleInputChange('course', e.target.value)}
+                  >
+                    <option value="Data Science">Data Science</option>
+                    <option value="Cyber Security">Cyber Security</option>
+                    <option value="Web Development">Web Development</option>
+                    <option value="Machine Learning">Machine Learning</option>
+                    <option value="General">General</option>
+                  </select>
+                  <select
+                    value={formData.type || 'lecture'}
+                    onChange={(e) => handleInputChange('type', e.target.value)}
+                  >
+                    <option value="lecture">Lecture</option>
+                    <option value="workshop">Workshop</option>
+                    <option value="qa">Q&A Session</option>
+                    <option value="demo">Demo</option>
+                    <option value="review">Review Session</option>
+                  </select>
                 </>
               )}
 

@@ -8,18 +8,7 @@
 }
 
 .admin-sidebar-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.3s ease, visibility 0.3s ease;
-  z-index: 90;
-}
-
-.admin-sidebar-overlay.visible {
-  opacity: 1;
-  visibility: visible;
+  display: none;
 }
 
 /* Admin Sidebar */
@@ -206,6 +195,13 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  margin: 0;
+}
+
+.admin-top-header .page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #2d3748;
   margin: 0;
 }
 

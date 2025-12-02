@@ -81,7 +81,7 @@ router.post('/login', async (req, res) => {
       isp: ipDetails?.isp || 'Unknown'
     };
 
-    // Check for demo student credentials
+    // Check for demo student credentials - Cybersecurity Course
     if (email === 'lqdeleon@gmail.com' && password === 'Admin@123') {
       const demoUser = {
         id: 'leonardo_deleon_user_id',
@@ -91,6 +91,30 @@ router.post('/login', async (req, res) => {
         enrollmentDate: '2025-11-07',
         enrollmentNumber: 'SU-2025-001',
         currentCourse: 'Cyber Security & Ethical Hacking',
+        courseDuration: '6 months',
+        lastLogin: loginInfo
+      };
+
+      const payload = { user: demoUser };
+      const token = jwt.sign(
+        payload,
+        process.env.JWT_SECRET || 'shef_lms_secret_key_2025',
+        { expiresIn: '7d' }
+      );
+
+      return res.json({ token, user: demoUser });
+    }
+
+    // Check for demo student credentials - Data Science & AI Course
+    if (email === 'abhi@gmail.com' && password === 'Admin@123') {
+      const demoUser = {
+        id: 'abhi_datascience_user_id',
+        name: 'Abhi',
+        email: 'abhi@gmail.com',
+        role: 'student',
+        enrollmentDate: '2025-12-01',
+        enrollmentNumber: 'SU-2025-002',
+        currentCourse: 'Data Science & AI',
         courseDuration: '6 months',
         lastLogin: loginInfo
       };

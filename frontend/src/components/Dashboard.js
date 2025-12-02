@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { firebaseService, COLLECTIONS } from '../services/firebaseService';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import './Dashboard.css';
 
 const Dashboard = ({ user, onLogout }) => {
@@ -17,48 +19,441 @@ const Dashboard = ({ user, onLogout }) => {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showHelpMenu, setShowHelpMenu] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState(null);
+  
+  // Course content state
+  const [courseContent, setCourseContent] = useState(null);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [expandedModules, setExpandedModules] = useState({});
+  
+  // Progress tracking state
+  const [viewedFiles, setViewedFiles] = useState([]);
+  const [progressPercent, setProgressPercent] = useState(0);
 
-  // Classroom Videos - Recorded Sessions
-  // Videos are stored in: /frontend/public/videos/
-  // Add your video files there and update this array
-  const classroomVideos = [
+  // Toggle module expansion
+  const toggleModule = (moduleId) => {
+    setExpandedModules(prev => ({
+      ...prev,
+      [moduleId]: !prev[moduleId]
+
+    }));
+  };
+
+  // Determine the course slug from user's enrolled course
+  const getCourseSlug = useCallback(() => {
+    const courseName = user?.currentCourse || '';
+    if (courseName.toLowerCase().includes('data science') || courseName.toLowerCase().includes('ai')) {
+      return 'data-science';
+    }
+    if (courseName.toLowerCase().includes('cyber') || courseName.toLowerCase().includes('ethical')) {
+      return 'cyber-security';
+    }
+    return 'data-science'; // default
+  }, [user?.currentCourse]);
+
+  // Load user's progress from Firebase
+  const loadUserProgress = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const progressRef = doc(db, 'userProgress', user.id);
+      const progressDoc = await getDoc(progressRef);
+      if (progressDoc.exists()) {
+        const data = progressDoc.data();
+        setViewedFiles(data.viewedFiles || []);
+      }
+    } catch (error) {
+      console.error('Error loading user progress:', error);
+    }
+  }, [user?.id]);
+
+  // Save progress to Firebase
+  const saveUserProgress = async (newViewedFiles) => {
+    if (!user?.id) return;
+    try {
+      const progressRef = doc(db, 'userProgress', user.id);
+      await setDoc(progressRef, {
+        viewedFiles: newViewedFiles,
+        lastUpdated: new Date().toISOString(),
+        userId: user.id,
+        userEmail: user.email
+      }, { merge: true });
+    } catch (error) {
+      console.error('Error saving user progress:', error);
+    }
+  };
+
+  // Calculate progress percentage
+  const calculateProgress = useCallback(() => {
+    if (!courseContent || !courseContent.totalFiles) return 0;
+    const totalFiles = courseContent.totalFiles;
+    const viewed = viewedFiles.length;
+    return Math.round((viewed / totalFiles) * 100);
+  }, [courseContent, viewedFiles]);
+
+  // Update progress when viewedFiles or courseContent changes
+  useEffect(() => {
+    const newProgress = calculateProgress();
+    setProgressPercent(newProgress);
+  }, [calculateProgress]);
+
+  // Load user progress on mount
+  useEffect(() => {
+    loadUserProgress();
+  }, [loadUserProgress]);
+
+  // Load course content from API
+  const loadCourseContent = useCallback(async () => {
+    const slug = getCourseSlug();
+    setContentLoading(true);
+    try {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://learnwithshef.com/api';
+      const response = await fetch(`${apiUrl}/content/${slug}`);
+      const data = await response.json();
+      if (data.success) {
+        setCourseContent(data);
+        if (data.modules && data.modules.length > 0) {
+          setSelectedModule(data.modules[0].id);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading course content:', error);
+    }
+    setContentLoading(false);
+  }, [getCourseSlug]);
+
+  // Handle file click - open in Colab for notebooks, otherwise download/view
+  const handleFileClick = (file) => {
+    // Mark file as viewed for progress tracking
+    const fileKey = file.path || file.name;
+    if (!viewedFiles.includes(fileKey)) {
+      const newViewedFiles = [...viewedFiles, fileKey];
+      setViewedFiles(newViewedFiles);
+      saveUserProgress(newViewedFiles);
+    }
+    
+    if (file.canOpenInColab) {
+      // Open notebook in Google Colab
+      const fileUrl = `https://learnwithshef.com${file.path}`;
+      const colabUrl = `https://colab.research.google.com/drive/`;
+      // Since we're serving from our own server, we'll open a viewer or download
+      // For now, open directly which will trigger download, or use nbviewer
+      window.open(fileUrl, '_blank');
+    } else if (file.extension === '.pdf') {
+      // Open PDF in new tab
+      window.open(`https://learnwithshef.com${file.path}`, '_blank');
+    } else if (file.extension === '.sql') {
+      // Download SQL file
+      window.open(`https://learnwithshef.com${file.path}`, '_blank');
+    } else {
+      // Default: download the file
+      window.open(`https://learnwithshef.com${file.path}`, '_blank');
+    }
+  };
+
+  // Check if user is Data Science or Cybersecurity
+  const isDataScience = () => {
+    const courseName = user?.currentCourse || '';
+    return courseName.toLowerCase().includes('data science') || courseName.toLowerCase().includes('ai');
+  };
+
+  // Classroom - Live Class Sessions for CYBERSECURITY (sorted by date, newest first)
+  const cyberClassroomSessions = [
     {
       id: 1,
-      title: 'Class 1: Introduction to Cyber Security',
-      description: 'Overview of cybersecurity fundamentals, threat landscape, and career opportunities in the field.',
-      date: '2025-11-15',
-      duration: '1h 30m',
-      videoUrl: '/videos/class1.mp4', // Place video in public/videos/class1.mp4
-      thumbnail: '🎬',
-      instructor: 'SHEF Instructor',
-      topics: ['Cyber Security Basics', 'CIA Triad', 'Types of Threats']
+      date: '2025-11-23',
+      title: 'IP Addressing & Subnetting',
+      type: 'Live Class',
+      instructor: 'Shubham',
+      instructorInitial: 'S',
+      instructorColor: '#E91E63',
+      duration: '1 hour 56 min',
+      driveId: '1Yb-ndaqMLbmAyMqJ0Knhjdj4YrgGzHV5'
     },
     {
       id: 2,
-      title: 'Class 2: Networking Fundamentals',
-      description: 'Understanding network protocols, OSI model, and how data travels across networks.',
-      date: '2025-11-18',
-      duration: '1h 45m',
-      videoUrl: '/videos/class2.mp4', // Place video in public/videos/class2.mp4
-      thumbnail: '🎬',
-      instructor: 'SHEF Instructor',
-      topics: ['OSI Model', 'TCP/IP', 'Network Devices']
+      date: '2025-11-22',
+      title: 'IP Address',
+      type: 'Live Class',
+      instructor: 'Shubham',
+      instructorInitial: 'S',
+      instructorColor: '#E91E63',
+      duration: '1 hour 51 min',
+      driveId: '1Ta5P35aWj4vyi6OPMiBk-1pA6BX8NrYW'
     },
     {
       id: 3,
-      title: 'Class 3: Linux Basics for Hackers',
-      description: 'Getting started with Linux command line, essential commands for security professionals.',
-      date: '2025-11-22',
-      duration: '2h 00m',
-      videoUrl: '/videos/class3.mp4', // Place video in public/videos/class3.mp4
-      thumbnail: '🎬',
-      instructor: 'SHEF Instructor',
-      topics: ['Linux Commands', 'File System', 'Permissions']
+      date: '2025-11-16',
+      title: 'Ports & Protocols',
+      type: 'Live Class',
+      instructor: 'Shubham',
+      instructorInitial: 'S',
+      instructorColor: '#E91E63',
+      duration: '2 hours 07 min',
+      driveId: '1Ewl8ZVOB9g-4VrH9ZA97CcLxDDdbibQz'
+    },
+    {
+      id: 4,
+      date: '2025-11-15',
+      title: 'Ports & Protocols',
+      type: 'Live Class',
+      instructor: 'Shubham',
+      instructorInitial: 'S',
+      instructorColor: '#E91E63',
+      duration: '1 hour 49 min',
+      driveId: '1pn6h4EGyWK-c5sPCkTMaJiFLXUFvpOWP'
+    },
+    {
+      id: 5,
+      date: '2025-11-09',
+      title: 'Phases of Ethical Hacking',
+      type: 'Live Class',
+      instructor: 'Shubham',
+      instructorInitial: 'S',
+      instructorColor: '#E91E63',
+      duration: '1 hour 47 min',
+      driveId: '18r_lBdxphW8fGzF4aLuRrzpSeCSSxVgg'
+    },
+    {
+      id: 6,
+      date: '2025-11-08',
+      title: 'Phases of Ethical Hacking, Security & Risk Management',
+      type: 'Live Class',
+      instructor: 'Shubham',
+      instructorInitial: 'S',
+      instructorColor: '#E91E63',
+      duration: '1 hour 59 min',
+      driveId: '1SBjP2SNFJgvXDa2z1ho2vBKmUewO0NUp'
     }
   ];
 
+  // Classroom - Live Class Sessions for DATA SCIENCE (placeholder - no videos yet)
+  const dsClassroomSessions = [
+    // No videos added yet for Data Science
+  ];
+
+  // Get classroom sessions based on user's course
+  const classroomSessions = isDataScience() ? dsClassroomSessions : cyberClassroomSessions;
+
+  // Helper function to format date like "Fri 29 Nov"
+  const formatClassDate = (dateStr) => {
+    const date = new Date(dateStr);
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
+  };
+
+  // Group sessions by date
+  const groupedSessions = classroomSessions.reduce((groups, session) => {
+    const date = session.date;
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(session);
+    return groups;
+  }, {});
+
+  // Complete Course Curriculum - DATA SCIENCE & AI
+  const dsCourseData = {
+    title: 'Full Stack Data Science & AI',
+    duration: '6 months',
+    modules: 10,
+    progress: 0,
+    lessons: '0/157',
+    modules_detail: [
+      {
+        id: 1,
+        name: 'Module 1: Introduction to Computer Programming',
+        duration: '3 weeks',
+        lessons: 15,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Python Fundamentals',
+            lessons: ['Introduction to Python', 'Variables and Data Types', 'Control Flow Statements']
+          },
+          {
+            id: 2,
+            title: 'Data Structures in Python',
+            lessons: ['Lists and Tuples', 'Dictionaries and Sets', 'String Manipulation']
+          }
+        ]
+      },
+      {
+        id: 2,
+        name: 'Module 2: Statistics for Data Science',
+        duration: '4 weeks',
+        lessons: 18,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Descriptive Statistics',
+            lessons: ['Mean, Median, Mode', 'Variance and Standard Deviation', 'Data Distribution']
+          },
+          {
+            id: 2,
+            title: 'Inferential Statistics',
+            lessons: ['Hypothesis Testing', 'Confidence Intervals', 'P-values and Significance']
+          }
+        ]
+      },
+      {
+        id: 3,
+        name: 'Module 3: Data Analysis with Python',
+        duration: '4 weeks',
+        lessons: 16,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'NumPy Fundamentals',
+            lessons: ['NumPy Arrays', 'Array Operations', 'Broadcasting and Vectorization']
+          },
+          {
+            id: 2,
+            title: 'Pandas for Data Analysis',
+            lessons: ['DataFrames and Series', 'Data Cleaning', 'Data Aggregation']
+          }
+        ]
+      },
+      {
+        id: 4,
+        name: 'Module 4: Data Visualization',
+        duration: '3 weeks',
+        lessons: 14,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Matplotlib & Seaborn',
+            lessons: ['Basic Plotting', 'Statistical Visualizations', 'Customizing Charts']
+          },
+          {
+            id: 2,
+            title: 'Interactive Visualization',
+            lessons: ['Plotly Basics', 'Dashboard Creation', 'Storytelling with Data']
+          }
+        ]
+      },
+      {
+        id: 5,
+        name: 'Module 5: SQL and Database Management',
+        duration: '3 weeks',
+        lessons: 12,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'SQL Fundamentals',
+            lessons: ['SELECT Queries', 'JOINs and Subqueries', 'Aggregations and Grouping']
+          },
+          {
+            id: 2,
+            title: 'Database Design',
+            lessons: ['Normalization', 'Entity Relationships', 'Database Optimization']
+          }
+        ]
+      },
+      {
+        id: 6,
+        name: 'Module 6: Machine Learning Fundamentals',
+        duration: '5 weeks',
+        lessons: 20,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Supervised Learning',
+            lessons: ['Linear Regression', 'Logistic Regression', 'Decision Trees']
+          },
+          {
+            id: 2,
+            title: 'Unsupervised Learning',
+            lessons: ['K-Means Clustering', 'Hierarchical Clustering', 'PCA and Dimensionality Reduction']
+          }
+        ]
+      },
+      {
+        id: 7,
+        name: 'Module 7: Advanced Machine Learning',
+        duration: '4 weeks',
+        lessons: 16,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Ensemble Methods',
+            lessons: ['Random Forests', 'Gradient Boosting', 'XGBoost and LightGBM']
+          },
+          {
+            id: 2,
+            title: 'Model Optimization',
+            lessons: ['Hyperparameter Tuning', 'Cross-Validation', 'Feature Engineering']
+          }
+        ]
+      },
+      {
+        id: 8,
+        name: 'Module 8: Deep Learning',
+        duration: '5 weeks',
+        lessons: 18,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Neural Networks',
+            lessons: ['Perceptrons and MLPs', 'Activation Functions', 'Backpropagation']
+          },
+          {
+            id: 2,
+            title: 'Deep Learning Frameworks',
+            lessons: ['TensorFlow Basics', 'Keras API', 'PyTorch Introduction']
+          }
+        ]
+      },
+      {
+        id: 9,
+        name: 'Module 9: Natural Language Processing',
+        duration: '4 weeks',
+        lessons: 14,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Text Processing',
+            lessons: ['Tokenization', 'TF-IDF', 'Word Embeddings']
+          },
+          {
+            id: 2,
+            title: 'NLP Models',
+            lessons: ['Sentiment Analysis', 'Named Entity Recognition', 'Transformers and BERT']
+          }
+        ]
+      },
+      {
+        id: 10,
+        name: 'Module 10: MLOps and Deployment',
+        duration: '3 weeks',
+        lessons: 14,
+        progress: 0,
+        chapters: [
+          {
+            id: 1,
+            title: 'Model Deployment',
+            lessons: ['Flask and FastAPI', 'Docker Containerization', 'Cloud Deployment']
+          },
+          {
+            id: 2,
+            title: 'MLOps Best Practices',
+            lessons: ['Model Monitoring', 'CI/CD for ML', 'A/B Testing']
+          }
+        ]
+      }
+    ]
+  };
+
   // Complete Course Curriculum - Cyber Security & Ethical Hacking
-  const courseData = {
+  const cyberCourseData = {
     title: 'Cyber Security & Ethical Hacking',
     duration: '6 months',
     modules: 10,
@@ -353,6 +748,78 @@ const Dashboard = ({ user, onLogout }) => {
     ]
   };
 
+  // Select courseData based on user's enrolled course
+  const courseData = isDataScience() ? dsCourseData : cyberCourseData;
+
+  // Course-specific Capstone Projects
+  const dsCapstoneProjects = [
+    { id: 1, icon: '📊', color: '#e6f3ff', title: 'Customer Churn Prediction', description: 'End-to-End ML Pipeline' },
+    { id: 2, icon: '🏠', color: '#fff0e6', title: 'Real Estate Price Prediction', description: 'Regression Analysis with Feature Engineering' },
+    { id: 3, icon: '🎬', color: '#f0e6ff', title: 'Movie Recommendation System', description: 'Collaborative Filtering & Content-Based' },
+    { id: 4, icon: '📈', color: '#e6ffe6', title: 'Stock Market Analysis', description: 'Time Series Forecasting with LSTM' },
+    { id: 5, icon: '🛒', color: '#ffe6e6', title: 'E-commerce Analytics Dashboard', description: 'Data Visualization & BI' }
+  ];
+
+  const cyberCapstoneProjects = [
+    { id: 1, icon: '🔐', color: '#ffe6e6', title: 'Enterprise Network Penetration Test', description: 'End-to-End Security Assessment' },
+    { id: 2, icon: '🌐', color: '#fff0e6', title: 'Web Application Security Audit', description: 'OWASP Top 10 Vulnerability Assessment' },
+    { id: 3, icon: '📡', color: '#e6f0ff', title: 'Wireless Network Security Analysis', description: 'Wi-Fi Penetration Testing & Security' },
+    { id: 4, icon: '🛡️', color: '#f0e6ff', title: 'Incident Response Simulation', description: 'Threat Detection & Response Plan' },
+    { id: 5, icon: '🔍', color: '#e6ffe6', title: 'Digital Forensics Investigation', description: 'Evidence Collection & Analysis' }
+  ];
+
+  const capstoneProjects = isDataScience() ? dsCapstoneProjects : cyberCapstoneProjects;
+
+  // Course-specific Practice Assessments
+  const dsPracticeAssessments = [
+    { id: 1, icon: '🐍', title: 'Python Coding Challenges', meta: '15 Questions | 60 Min' },
+    { id: 2, icon: '📊', title: 'Statistics & Probability Quiz', meta: '20 Questions | 45 Min' },
+    { id: 3, icon: '🤖', title: 'Machine Learning Concepts', meta: '25 Questions | 90 Min' }
+  ];
+
+  const cyberPracticeAssessments = [
+    { id: 1, icon: '🔐', title: 'Network Security Challenges', meta: '8 Questions | 90 Min' },
+    { id: 2, icon: '🛡️', title: 'Web Application Security Lab', meta: '6 Questions | 120 Min' },
+    { id: 3, icon: '⚔️', title: 'CTF Challenges', meta: '10 Questions | 180 Min' }
+  ];
+
+  const practiceAssessments = isDataScience() ? dsPracticeAssessments : cyberPracticeAssessments;
+
+  // Course-specific Quiz Assessments
+  const dsQuizAssessments = [
+    { id: 1, icon: 'SQL', title: 'SQL Proficiency Test', iconClass: 'nn-icon' },
+    { id: 2, icon: '📊', title: 'Data Visualization Quiz', iconClass: 'microsoft-icon' },
+    { id: 3, icon: '🧠', title: 'Deep Learning Fundamentals', iconClass: 'meta-icon' }
+  ];
+
+  const cyberQuizAssessments = [
+    { id: 1, icon: 'CEH', title: 'CEH Mock Exam', iconClass: 'nn-icon' },
+    { id: 2, icon: '🔒', title: 'CompTIA Security+ Practice Test', iconClass: 'microsoft-icon' },
+    { id: 3, icon: '🌐', title: 'OSCP Preparation Quiz', iconClass: 'meta-icon' }
+  ];
+
+  const quizAssessments = isDataScience() ? dsQuizAssessments : cyberQuizAssessments;
+
+  // Course-specific Supplementary Courses
+  const dsSupplementaryCourses = [
+    { id: 1, badge: 'A', color: '#e6f3ff', title: 'Advanced Analytics', meta: '📚 25 Lessons • ⏱️ 15000 min', desc: 'Business Intelligence, A/B Testing, and Advanced Statistical Methods...' },
+    { id: 2, badge: 'B', color: '#f0e6ff', title: 'Big Data Technologies', meta: '📚 30 Lessons • ⏱️ 18000 min', desc: 'Spark, Hadoop, and distributed computing for large-scale data processing...' },
+    { id: 3, badge: 'C', color: '#e6ffe6', title: 'Cloud ML Platforms', meta: '📚 22 Lessons • ⏱️ 13200 min', desc: 'AWS SageMaker, Google Vertex AI, and Azure ML for cloud-based ML...' }
+  ];
+
+  const cyberSupplementaryCourses = [
+    { id: 1, badge: 'K', color: '#e6f3ff', title: 'Kali Linux Mastery', meta: '📚 32 Lessons • ⏱️ 18000 min', desc: 'Master Kali Linux tools and techniques for penetration testing and...' },
+    { id: 2, badge: 'C', color: '#e6d9ff', title: 'Cloud Security', meta: '📚 28 Lessons • ⏱️ 16200 min', desc: 'AWS, Azure, and GCP security best practices, IAM, and cloud archi...' },
+    { id: 3, badge: 'M', color: '#d9f0e6', title: 'Malware Analysis', meta: '📚 30 Lessons • ⏱️ 17400 min', desc: 'Reverse engineering, dynamic analysis, and threat detection techn...' }
+  ];
+
+  const supplementaryCourses = isDataScience() ? dsSupplementaryCourses : cyberSupplementaryCourses;
+
+  // Course-specific Job Types
+  const dsJobTypes = ['Data Scientist', 'ML Engineer', 'Data Analyst', 'AI Engineer', 'Business Analyst'];
+  const cyberJobTypes = ['Security Analyst', 'Penetration Tester', 'SOC Analyst', 'Security Engineer', 'Threat Hunter'];
+  const relevantJobTypes = isDataScience() ? dsJobTypes : cyberJobTypes;
+
   useEffect(() => {
     fetchDashboardData();
     
@@ -369,6 +836,13 @@ const Dashboard = ({ user, onLogout }) => {
     handleResize(); // Call on mount
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Load course content when switching to Learn section
+  useEffect(() => {
+    if (activeSection === 'courses' && !courseContent) {
+      loadCourseContent();
+    }
+  }, [activeSection]);
 
   const fetchDashboardData = async () => {
     try {
@@ -479,14 +953,11 @@ const Dashboard = ({ user, onLogout }) => {
   return (
     <div className="dashboard">
       {/* Sidebar */}
-      <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+      <aside className="sidebar open">
         <div className="sidebar-header">
           <div className="logo">
             <img src="/Shef_logo.png" alt="SHEF" className="logo-image" />
           </div>
-          <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            ☰
-          </button>
         </div>
 
         <nav className="sidebar-nav">
@@ -497,6 +968,14 @@ const Dashboard = ({ user, onLogout }) => {
           >
             <span className="icon">🏠</span>
             <span>Home</span>
+          </button>
+          <button 
+            className={`nav-item ${activeSection === 'classroom' ? 'active' : ''}`}
+            onClick={() => { setActiveSection('classroom'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
+            title="Classroom"
+          >
+            <span className="icon">🎥</span>
+            <span>Classroom</span>
           </button>
           <button 
             className={`nav-item ${activeSection === 'courses' ? 'active' : ''}`}
@@ -546,14 +1025,6 @@ const Dashboard = ({ user, onLogout }) => {
             <span className="icon">💼</span>
             <span>Job Board</span>
           </button>
-          <button 
-            className={`nav-item ${activeSection === 'classroom' ? 'active' : ''}`}
-            onClick={() => { setActiveSection('classroom'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
-            title="Classroom"
-          >
-            <span className="icon">🎥</span>
-            <span>Classroom</span>
-          </button>
         </nav>
 
         <div className="sidebar-footer">
@@ -564,23 +1035,11 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
       </aside>
 
-      <div
-        className={`sidebar-overlay ${sidebarOpen ? 'visible' : ''}`}
-        onClick={() => setSidebarOpen(false)}
-      ></div>
-
       {/* Main Content */}
-      <main className={`main-content ${sidebarOpen ? 'sidebar-open' : 'sidebar-collapsed'}`}>
+      <main className="main-content sidebar-open">
         {/* Top Header */}
         <header className="top-header">
           <div className="header-left">
-            <button
-              className="dashboard-menu-btn"
-              onClick={() => setSidebarOpen(prev => !prev)}
-              aria-label="Toggle navigation"
-            >
-              ☰
-            </button>
             <img src="/Shef_logo.png" alt="SHEF" className="header-logo" />
           </div>
           <div className="header-right">
@@ -604,16 +1063,18 @@ const Dashboard = ({ user, onLogout }) => {
               {/* Hero Section with Featured Program */}
               <div className="featured-program">
                 <div className="featured-content">
-                  <h2>Introducing our brand new partnership with Shef USA</h2>
-                  <p>Advance your cybersecurity skills with industry-recognized certification</p>
+                  <h2>Welcome to Shef USA Learning Platform</h2>
+                  <p>{isDataScience() 
+                    ? 'Master Data Science & AI with live classes, top instructors, and 100% job assistance' 
+                    : 'Advance your cybersecurity skills with industry-recognized certification and hands-on labs'}</p>
                   <div className="featured-buttons">
-                    <button className="btn-primary">Explore Shef USA Program</button>
-                    <button className="btn-secondary">Talk to Admissions Team</button>
-                    <button className="btn-tertiary" onClick={() => window.open('https://shefusa.com/', '_blank')}>Visit Shef USA</button>
+                    <button className="btn-primary" onClick={() => window.open('https://shefusa.com/courses-registration/', '_blank')}>Explore Programs</button>
+                    <button className="btn-secondary" onClick={() => window.open('tel:+18889277072', '_self')}>📞 +1 (888) 927-7072</button>
+                    <button className="btn-tertiary" onClick={() => window.open('https://shefusa.com/', '_blank')}>Visit ShefUSA.com</button>
                   </div>
                 </div>
                 <div className="featured-image">
-                  <div className="image-placeholder">Shef USA Partnership</div>
+                  <div className="image-placeholder">🎓 12.5K+ Students Enrolled</div>
                 </div>
               </div>
 
@@ -638,12 +1099,12 @@ const Dashboard = ({ user, onLogout }) => {
                     <div className="module-item">
                       <span className="module-icon">📚</span>
                       <span className="module-name">First Module</span>
-                      <span className="module-desc">Introduction to Cyber Security and Ethical Hacking</span>
+                      <span className="module-desc">{courseData.modules_detail[0]?.name?.replace(/^Module \d+:\s*/, '') || 'Introduction'}</span>
                     </div>
                     <div className="module-item">
                       <span className="module-icon">📖</span>
                       <span className="module-name">First Lesson</span>
-                      <span className="module-desc">What is Cyber Security?</span>
+                      <span className="module-desc">{courseData.modules_detail[0]?.chapters?.[0]?.lessons?.[0] || 'Getting Started'}</span>
                     </div>
                   </div>
 
@@ -691,45 +1152,23 @@ const Dashboard = ({ user, onLogout }) => {
               {/* Practice Coding Assessments */}
               <div className="section">
                 <div className="section-header">
-                  <h2>Practice Security Challenges</h2>
+                  <h2>{isDataScience() ? 'Practice Data Science Challenges' : 'Practice Security Challenges'}</h2>
                   <button className="view-all-btn">See all</button>
                 </div>
                 <div className="practice-assessments-grid">
-                  <div className="assessment-card">
-                    <div className="assessment-header">
-                      <div className="assessment-icon">🔐</div>
+                  {practiceAssessments.map((assessment) => (
+                    <div key={assessment.id} className="assessment-card">
+                      <div className="assessment-header">
+                        <div className="assessment-icon">{assessment.icon}</div>
+                      </div>
+                      <div className="assessment-content">
+                        <h4>{assessment.title}</h4>
+                        <p className="assessment-meta">{assessment.meta}</p>
+                        <button className="btn-start">Start now →</button>
+                        <button className="btn-share">⤓</button>
+                      </div>
                     </div>
-                    <div className="assessment-content">
-                      <h4>Network Security Challenges</h4>
-                      <p className="assessment-meta">8 Questions | 90 Min</p>
-                      <button className="btn-start">Start now →</button>
-                      <button className="btn-share">⤓</button>
-                    </div>
-                  </div>
-
-                  <div className="assessment-card">
-                    <div className="assessment-header">
-                      <div className="assessment-icon">🛡️</div>
-                    </div>
-                    <div className="assessment-content">
-                      <h4>Web Application Security Lab</h4>
-                      <p className="assessment-meta">6 Questions | 120 Min</p>
-                      <button className="btn-start">Start now →</button>
-                      <button className="btn-share">⤓</button>
-                    </div>
-                  </div>
-
-                  <div className="assessment-card">
-                    <div className="assessment-header">
-                      <div className="assessment-icon">⚔️</div>
-                    </div>
-                    <div className="assessment-content">
-                      <h4>CTF Challenges</h4>
-                      <p className="assessment-meta">10 Questions | 180 Min</p>
-                      <button className="btn-start">Start now →</button>
-                      <button className="btn-share">⤓</button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
 
@@ -740,38 +1179,18 @@ const Dashboard = ({ user, onLogout }) => {
                   <button className="view-all-btn">See all</button>
                 </div>
                 <div className="practice-assessments-grid">
-                  <div className="assessment-card">
-                    <div className="assessment-header">
-                      <div className="assessment-icon nn-icon">CEH</div>
+                  {quizAssessments.map((quiz) => (
+                    <div key={quiz.id} className="assessment-card">
+                      <div className="assessment-header">
+                        <div className={`assessment-icon ${quiz.iconClass}`}>{quiz.icon}</div>
+                      </div>
+                      <div className="assessment-content">
+                        <h4>{quiz.title}</h4>
+                        <button className="btn-start">Start now →</button>
+                        <button className="btn-share">⤓</button>
+                      </div>
                     </div>
-                    <div className="assessment-content">
-                      <h4>CEH Mock Exam</h4>
-                      <button className="btn-start">Start now →</button>
-                      <button className="btn-share">⤓</button>
-                    </div>
-                  </div>
-
-                  <div className="assessment-card">
-                    <div className="assessment-header">
-                      <div className="assessment-icon microsoft-icon">🔒</div>
-                    </div>
-                    <div className="assessment-content">
-                      <h4>CompTIA Security+ Practice Test</h4>
-                      <button className="btn-start">Start now →</button>
-                      <button className="btn-share">⤓</button>
-                    </div>
-                  </div>
-
-                  <div className="assessment-card">
-                    <div className="assessment-header">
-                      <div className="assessment-icon meta-icon">🌐</div>
-                    </div>
-                    <div className="assessment-content">
-                      <h4>OSCP Preparation Quiz</h4>
-                      <button className="btn-start">Start now →</button>
-                      <button className="btn-share">⤓</button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
 
@@ -782,27 +1201,15 @@ const Dashboard = ({ user, onLogout }) => {
                   <button className="view-all-btn">See all →</button>
                 </div>
                 <div className="capstone-projects-grid">
-                  <div className="capstone-card">
-                    <div className="capstone-icon" style={{ background: '#ffe6e6' }}>🔐</div>
-                    <h4>Enterprise Network Penetration Test</h4>
-                    <p className="capstone-course">End-to-End Security Assessment</p>
-                    <button className="btn-start">Start now →</button>
-                    <button className="btn-share">⬆️</button>
-                  </div>
-                  <div className="capstone-card">
-                    <div className="capstone-icon" style={{ background: '#fff0e6' }}>🌐</div>
-                    <h4>Web Application Security Audit</h4>
-                    <p className="capstone-course">OWASP Top 10 Vulnerability Assessment</p>
-                    <button className="btn-start">Start now →</button>
-                    <button className="btn-share">⬆️</button>
-                  </div>
-                  <div className="capstone-card">
-                    <div className="capstone-icon" style={{ background: '#e6f0ff' }}>📡</div>
-                    <h4>Wireless Network Security Analysis</h4>
-                    <p className="capstone-course">Wi-Fi Penetration Testing & Security</p>
-                    <button className="btn-start">Start now →</button>
-                    <button className="btn-share">⬆️</button>
-                  </div>
+                  {capstoneProjects.slice(0, 3).map((project) => (
+                    <div key={project.id} className="capstone-card">
+                      <div className="capstone-icon" style={{ background: project.color }}>{project.icon}</div>
+                      <h4>{project.title}</h4>
+                      <p className="capstone-course">{project.description}</p>
+                      <button className="btn-start">Start now →</button>
+                      <button className="btn-share">⬆️</button>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -813,150 +1220,220 @@ const Dashboard = ({ user, onLogout }) => {
                   <button className="view-all-btn">See all →</button>
                 </div>
                 <div className="supplementary-courses-grid">
-                  <div className="supplementary-card">
-                    <div className="supplementary-badge">K</div>
-                    <h4>Kali Linux Mastery</h4>
-                    <p className="supplementary-meta">📚 32 Lessons • ⏱️ 18000 min</p>
-                    <p className="supplementary-desc">Master Kali Linux tools and techniques for penetration testing and...</p>
-                    <div className="progress-bar">
-                      <div className="progress-fill" style={{ width: '0%' }}></div>
+                  {supplementaryCourses.map((course) => (
+                    <div key={course.id} className="supplementary-card">
+                      <div className="supplementary-badge" style={{ background: course.color }}>{course.badge}</div>
+                      <h4>{course.title}</h4>
+                      <p className="supplementary-meta">{course.meta}</p>
+                      <p className="supplementary-desc">{course.desc}</p>
+                      <div className="progress-bar">
+                        <div className="progress-fill" style={{ width: '0%' }}></div>
+                      </div>
+                      <span className="progress-percent">0%</span>
+                      <div className="supplementary-actions">
+                        <button className="btn-view">View →</button>
+                        <button className="btn-share">⬆️</button>
+                      </div>
                     </div>
-                    <span className="progress-percent">0%</span>
-                    <div className="supplementary-actions">
-                      <button className="btn-view">View →</button>
-                      <button className="btn-share">⬆️</button>
-                    </div>
-                  </div>
-                  <div className="supplementary-card">
-                    <div className="supplementary-badge" style={{ background: '#e6d9ff' }}>C</div>
-                    <h4>Cloud Security</h4>
-                    <p className="supplementary-meta">📚 28 Lessons • ⏱️ 16200 min</p>
-                    <p className="supplementary-desc">AWS, Azure, and GCP security best practices, IAM, and cloud archi...</p>
-                    <div className="progress-bar">
-                      <div className="progress-fill" style={{ width: '0%' }}></div>
-                    </div>
-                    <span className="progress-percent">0%</span>
-                    <div className="supplementary-actions">
-                      <button className="btn-view">View →</button>
-                      <button className="btn-share">⬆️</button>
-                    </div>
-                  </div>
-                  <div className="supplementary-card">
-                    <div className="supplementary-badge" style={{ background: '#d9f0e6' }}>M</div>
-                    <h4>Malware Analysis</h4>
-                    <p className="supplementary-meta">📚 30 Lessons • ⏱️ 17400 min</p>
-                    <p className="supplementary-desc">Reverse engineering, dynamic analysis, and threat detection techn...</p>
-                    <div className="progress-bar">
-                      <div className="progress-fill" style={{ width: '0%' }}></div>
-                    </div>
-                    <span className="progress-percent">0%</span>
-                    <div className="supplementary-actions">
-                      <button className="btn-view">View →</button>
-                      <button className="btn-share">⬆️</button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </>
           )}
 
           {activeSection === 'courses' && (
-            <div className="learn-section">
-              <div className="section-header">
-                <h2>{courseData.title}</h2>
-                <p className="course-subtitle">{courseData.duration} • {courseData.modules} modules</p>
-              </div>
-
-              <div className="learn-container">
-                <div className="learn-sidebar">
-                  <div className="course-info">
-                    <h3>{courseData.title}</h3>
-                    <p>Data Science is an increasingly important field as companies struggle to make sense of the vast quantities of data they generate. AlmaBetter's Full Stack Data Science course is the perfect way for students to learn the data science necessary to excel in this exciting field with objectives in Business Analytics, Data Engineering, and Advanced Machine Learning, this immersive program covers everything from data...</p>
-                    <button className="btn-resume">Resume Learning</button>
+            <div className="learn-section-accordion">
+              {/* Course Hero Card with Progress Circle */}
+              <div className="course-hero-card">
+                <div className="course-hero-left">
+                  <h2>{user?.currentCourse || courseData.title}</h2>
+                  <div className="course-meta-info">
+                    <span>{courseData.duration}</span>
+                    <span>•</span>
+                    <span>{courseContent?.modulesCount || courseData.modules} modules</span>
                   </div>
-
-                  <div className="modules-list">
-                    <h4>Modules ({courseData.modules})</h4>
-                    {courseData.modules_detail.map((module) => (
-                      <div 
-                        key={module.id} 
-                        className={`module-item ${selectedModule === module.id ? 'active' : ''}`}
-                        onClick={() => setSelectedModule(module.id)}
-                      >
-                        <div className="module-icon">📚</div>
-                        <div className="module-info">
-                          <h5>{module.name}</h5>
-                          <p>{module.lessons} Lessons • {module.duration}</p>
-                        </div>
-                        <div className="module-progress">
-                          <span className="progress-text">{module.progress}%</span>
-                        </div>
+                  <p className="course-description">
+                    {isDataScience() 
+                      ? 'Data Science is an increasingly important field as companies struggle to make sense of the vast quantities of data they generate. This Full Stack Data Science course is the perfect way for students to learn the skills necessary to excel in this exciting field. With electives in Business Analytics, Data Engineering, and Advanced Machine Learning, this immersive program covers everything from data acquisition and storage to analysis, visualization, and machine learning...'
+                      : 'Cyber Security is one of the fastest-growing fields in technology. This comprehensive Cyber Security & Ethical Hacking course will teach you everything from basic network security concepts to advanced penetration testing techniques. With hands-on labs, real-world scenarios, and industry-recognized certifications preparation, you\'ll be ready to protect organizations from cyber threats...'}
+                  </p>
+                  <div className="continue-from">
+                    <span className="continue-label">Continue from where you left,</span>
+                    <div className="continue-info">
+                      <div className="continue-item">
+                        <span className="continue-title">Module</span>
+                        <span className="continue-value">{courseContent?.modules?.[0]?.displayName || courseData.modules_detail[0]?.name?.replace(/^Module \d+:\s*/, '')}</span>
                       </div>
-                    ))}
+                      <div className="continue-item">
+                        <span className="continue-title">Lesson</span>
+                        <span className="continue-value">{courseContent?.modules?.[0]?.files?.[0]?.displayName || courseData.modules_detail[0]?.chapters?.[0]?.lessons?.[0]}</span>
+                      </div>
+                    </div>
+                    <button className="btn-resume" onClick={() => {
+                      if (courseContent?.modules?.[0]) {
+                        setExpandedModules(prev => ({ ...prev, [courseContent.modules[0].id]: true }));
+                      }
+                    }}>
+                      Resume Learning
+                    </button>
                   </div>
                 </div>
+                <div className="course-hero-right">
+                  <div className="medal-icon">🏅</div>
+                  <div className="progress-circle-container">
+                    <svg className="progress-circle" viewBox="0 0 120 120">
+                      <circle className="progress-bg" cx="60" cy="60" r="54" />
+                      <circle 
+                        className="progress-fill-circle" 
+                        cx="60" 
+                        cy="60" 
+                        r="54" 
+                        strokeDasharray={`${2 * Math.PI * 54}`}
+                        strokeDashoffset={`${2 * Math.PI * 54 * (1 - progressPercent / 100)}`}
+                      />
+                    </svg>
+                    <div className="progress-text-center">
+                      <span className="progress-number">{progressPercent}%</span>
+                      <span className="progress-label">Progress</span>
+                    </div>
+                  </div>
+                  <div className="lessons-count">
+                    <span className="lessons-label">Lessons:</span>
+                    <span className="lessons-value">{viewedFiles.length}/{courseContent?.totalFiles || 157}</span>
+                  </div>
+                </div>
+              </div>
 
-                <div className="learn-main">
-                  {courseData.modules_detail.map((module) => (
-                    selectedModule === module.id && (
-                      <div key={module.id}>
-                        <div className="course-hero">
-                          <div className="hero-content">
-                            <h2>{module.name}</h2>
-                            <p>{module.lessons} Lessons • {module.duration}</p>
-                            <div className="course-stats">
-                              <div className="stat">
-                                <span className="stat-value">{module.progress}%</span>
-                                <span className="stat-label">Progress</span>
-                              </div>
-                              <div className="stat">
-                                <span className="stat-value">{module.lessons}</span>
-                                <span className="stat-label">Total Lessons</span>
+              {/* Module Accordions */}
+              <div className="section-header modules-header">
+                <h3>Course Modules</h3>
+                <p className="course-subtitle">
+                  {courseContent ? `${courseContent.modulesCount} modules • ${courseContent.totalFiles} files` : 'Loading...'}
+                </p>
+              </div>
+
+              {contentLoading ? (
+                <div className="loading-container">
+                  <div className="loader"></div>
+                  <p>Loading course content...</p>
+                </div>
+              ) : courseContent && courseContent.modules && courseContent.modules.length > 0 ? (
+                <div className="modules-accordion">
+                  {courseContent.modules.map((module) => (
+                    <div key={module.id} className={`accordion-module ${expandedModules[module.id] ? 'expanded' : ''}`}>
+                      <div className="accordion-header" onClick={() => toggleModule(module.id)}>
+                        <div className="accordion-left">
+                          <span className="module-label">Module {module.id}</span>
+                          <h3 className="module-title">{module.displayName || module.name}</h3>
+                          <div className="module-meta">
+                            <span>{module.filesCount} Lessons</span>
+                            <span>•</span>
+                            <span>4 weeks</span>
+                            <span>•</span>
+                            <span>5 credits</span>
+                            <span>•</span>
+                            <a href="#" className="ebook-link" onClick={(e) => e.stopPropagation()}>EBook ↗</a>
+                          </div>
+                        </div>
+                        <div className="accordion-right">
+                          <div className="progress-info">
+                            <span className="progress-label">Progress ⓘ</span>
+                            <div className="progress-bar-container">
+                              <span className="progress-percent">0%</span>
+                              <div className="progress-bar">
+                                <div className="progress-fill" style={{ width: '0%' }}></div>
                               </div>
                             </div>
                           </div>
-                          <div className="hero-progress-circle">
-                            <svg width="150" height="150">
-                              <circle cx="75" cy="75" r="65" fill="none" stroke="#e0e0e0" strokeWidth="6"/>
-                              <circle 
-                                cx="75" 
-                                cy="75" 
-                                r="65" 
-                                fill="none" 
-                                stroke="url(#gradient)" 
-                                strokeWidth="6" 
-                                strokeDasharray={`${2 * Math.PI * 65 * (module.progress / 100)} ${2 * Math.PI * 65}`}
-                                strokeDashoffset="0"
-                                transform="rotate(-90 75 75)"
-                                style={{ transition: 'stroke-dasharray 0.5s' }}
-                              />
-                              <defs>
-                                <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                  <stop offset="0%" stopColor="#667eea"/>
-                                  <stop offset="100%" stopColor="#764ba2"/>
-                                </linearGradient>
-                              </defs>
-                              <text x="75" y="75" textAnchor="middle" dy=".3em" fontSize="28" fontWeight="bold" fill="#667eea">{module.progress}%</text>
+                          <button className="accordion-toggle">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points={expandedModules[module.id] ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}></polyline>
                             </svg>
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {expandedModules[module.id] && (
+                        <div className="accordion-content">
+                          <div className="files-grid">
+                            {module.files && module.files.map((file) => {
+                              const fileKey = file.path || file.name;
+                              const isViewed = viewedFiles.includes(fileKey);
+                              return (
+                                <div 
+                                  key={file.id} 
+                                  className={`file-card ${file.canOpenInColab ? 'notebook' : ''} ${isViewed ? 'viewed' : ''}`}
+                                  onClick={() => handleFileClick(file)}
+                                >
+                                  {isViewed && <span className="viewed-check">✓</span>}
+                                  <span className="file-icon-large">{file.icon}</span>
+                                  <div className="file-details">
+                                    <span className="file-name">{file.displayName || file.name}</span>
+                                    <span className="file-type-badge">{file.type}</span>
+                                  </div>
+                                  {file.canOpenInColab && (
+                                    <span className="colab-tag">Colab</span>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
-
-                        <div className="chapters-section">
-                          <h3>Chapters & Lessons</h3>
-                          <div className="chapters-list">
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* Fallback to static course data for Cybersecurity */
+                <div className="modules-accordion">
+                  {courseData.modules_detail.map((module) => (
+                    <div key={module.id} className={`accordion-module ${expandedModules[module.id] ? 'expanded' : ''}`}>
+                      <div className="accordion-header" onClick={() => toggleModule(module.id)}>
+                        <div className="accordion-left">
+                          <span className="module-label">Module {module.id}</span>
+                          <h3 className="module-title">{module.name.replace(/^Module \d+:\s*/, '')}</h3>
+                          <div className="module-meta">
+                            <span>{module.lessons} Lessons</span>
+                            <span>•</span>
+                            <span>{module.duration}</span>
+                            <span>•</span>
+                            <span>5 credits</span>
+                            <span>•</span>
+                            <a href="#" className="ebook-link" onClick={(e) => e.stopPropagation()}>EBook ↗</a>
+                          </div>
+                        </div>
+                        <div className="accordion-right">
+                          <div className="progress-info">
+                            <span className="progress-label">Progress ⓘ</span>
+                            <div className="progress-bar-container">
+                              <span className="progress-percent">{module.progress}%</span>
+                              <div className="progress-bar">
+                                <div className="progress-fill" style={{ width: `${module.progress}%` }}></div>
+                              </div>
+                            </div>
+                          </div>
+                          <button className="accordion-toggle">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points={expandedModules[module.id] ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}></polyline>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {expandedModules[module.id] && (
+                        <div className="accordion-content">
+                          <div className="chapters-accordion">
                             {module.chapters.map((chapter) => (
-                              <div key={chapter.id} className="chapter-item">
-                                <div className="chapter-header">
-                                  <span className="chapter-number">Chapter {chapter.id}</span>
+                              <div key={chapter.id} className="chapter-card">
+                                <div className="chapter-header-acc">
+                                  <span className="chapter-num">Chapter {chapter.id}</span>
                                   <h4>{chapter.title}</h4>
-                                  <span className="chapter-badge">{chapter.lessons.length} Lessons</span>
                                 </div>
-                                <div className="lessons-list">
+                                <div className="lessons-grid">
                                   {chapter.lessons.map((lesson, idx) => (
-                                    <div key={idx} className="lesson-item">
+                                    <div key={idx} className="lesson-card">
                                       <span className="lesson-icon">📖</span>
-                                      <span className="lesson-name">Lesson {idx + 1}: {lesson}</span>
-                                      <span className="lesson-status">✓</span>
+                                      <span className="lesson-text">{lesson}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -964,11 +1441,11 @@ const Dashboard = ({ user, onLogout }) => {
                             ))}
                           </div>
                         </div>
-                      </div>
-                    )
+                      )}
+                    </div>
                   ))}
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -1101,7 +1578,7 @@ const Dashboard = ({ user, onLogout }) => {
           {activeSection === 'projects' && (
             <div className="section">
               <div className="section-header">
-                <h2>Cyber Security Projects</h2>
+                <h2>{isDataScience() ? 'Data Science Projects' : 'Cyber Security Projects'}</h2>
                 <p className="section-subtitle">Build real-world projects to demonstrate your skills</p>
               </div>
 
@@ -1112,7 +1589,9 @@ const Dashboard = ({ user, onLogout }) => {
                   <div className="capstone-projects-grid">
                     {projects.map((project, index) => {
                       const colors = ['#ffe6e6', '#fff0e6', '#e6f0ff', '#e6ffe6', '#f0e6ff', '#ffe6f0'];
-                      const icons = ['🔐', '🌐', '📡', '🦠', '☁️', '🔴', '🎯', '🛡️'];
+                      const icons = isDataScience() 
+                        ? ['📊', '🏠', '🎬', '📈', '🛒', '🤖', '📉', '💹']
+                        : ['🔐', '🌐', '📡', '🦠', '☁️', '🔴', '🎯', '🛡️'];
                       return (
                         <div key={project.id} className="capstone-card">
                           <div className="capstone-icon" style={{ background: colors[index % colors.length] }}>
@@ -1144,8 +1623,18 @@ const Dashboard = ({ user, onLogout }) => {
                     })}
                   </div>
                 ) : (
-                  <div className="empty-state">
-                    <p>📁 No projects available yet. Admin will add projects soon!</p>
+                  /* Show static capstone projects if no Firebase projects */
+                  <div className="capstone-projects-grid">
+                    {capstoneProjects.map((project) => (
+                      <div key={project.id} className="capstone-card">
+                        <div className="capstone-icon" style={{ background: project.color }}>
+                          {project.icon}
+                        </div>
+                        <h4>{project.title}</h4>
+                        <p className="capstone-course">{project.description}</p>
+                        <button className="btn-start">Start Project →</button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1156,7 +1645,7 @@ const Dashboard = ({ user, onLogout }) => {
             <div className="section">
               <div className="section-header">
                 <h2>Career Development</h2>
-                <p className="section-subtitle">Launch your cybersecurity career with expert guidance</p>
+                <p className="section-subtitle">Launch your {isDataScience() ? 'data science' : 'cybersecurity'} career with expert guidance</p>
               </div>
 
               {/* Career Resources */}
@@ -1164,17 +1653,17 @@ const Dashboard = ({ user, onLogout }) => {
                 <div className="career-stats">
                   <div className="career-stat-card">
                     <div className="stat-icon">💼</div>
-                    <h3>850+</h3>
+                    <h3>{isDataScience() ? '1200+' : '850+'}</h3>
                     <p>Job Opportunities</p>
                   </div>
                   <div className="career-stat-card">
                     <div className="stat-icon">🏢</div>
-                    <h3>200+</h3>
+                    <h3>{isDataScience() ? '350+' : '200+'}</h3>
                     <p>Hiring Partners</p>
                   </div>
                   <div className="career-stat-card">
                     <div className="stat-icon">💰</div>
-                    <h3>$95K</h3>
+                    <h3>{isDataScience() ? '$120K' : '$95K'}</h3>
                     <p>Average Salary</p>
                   </div>
                   <div className="career-stat-card">
@@ -1189,7 +1678,7 @@ const Dashboard = ({ user, onLogout }) => {
                   <div className="service-card">
                     <div className="service-icon">📝</div>
                     <h4>Resume Building</h4>
-                    <p>Get expert help crafting an ATS-friendly cybersecurity resume that stands out</p>
+                    <p>Get expert help crafting an ATS-friendly {isDataScience() ? 'data science' : 'cybersecurity'} resume that stands out</p>
                     <button className="btn-secondary">Build Resume</button>
                   </div>
 
@@ -1203,7 +1692,7 @@ const Dashboard = ({ user, onLogout }) => {
                   <div className="service-card">
                     <div className="service-icon">🎯</div>
                     <h4>Career Counseling</h4>
-                    <p>One-on-one sessions with career advisors to plan your cybersecurity path</p>
+                    <p>One-on-one sessions with career advisors to plan your {isDataScience() ? 'data science' : 'cybersecurity'} path</p>
                     <button className="btn-secondary">Book Session</button>
                   </div>
 
@@ -1553,111 +2042,115 @@ const Dashboard = ({ user, onLogout }) => {
             <div className="section classroom-section">
               <div className="section-header">
                 <h2>🎥 Classroom</h2>
-                <p className="section-subtitle">Watch your recorded class sessions</p>
+                <p className="section-subtitle">Your live class sessions and recordings</p>
               </div>
 
-              {selectedVideo ? (
+              {classroomSessions.length === 0 ? (
+                /* No videos available message */
+                <div className="empty-classroom">
+                  <div className="empty-icon">📹</div>
+                  <h3>No Recordings Available Yet</h3>
+                  <p>Class recordings for {isDataScience() ? 'Data Science' : 'Cyber Security'} will appear here once live sessions begin.</p>
+                  <p className="empty-note">Stay tuned! New recordings will be added after each live class session.</p>
+                </div>
+              ) : selectedVideo ? (
                 /* Video Player View */
                 <div className="video-player-container">
                   <button 
                     className="back-to-videos-btn"
                     onClick={() => setSelectedVideo(null)}
                   >
-                    ← Back to Videos
+                    ← Back to Classes
                   </button>
                   
                   <div className="video-player-wrapper">
-                    <video 
-                      controls 
-                      autoPlay
-                      className="video-player"
-                      key={selectedVideo.id}
-                    >
-                      <source src={selectedVideo.videoUrl} type="video/mp4" />
-                      Your browser does not support the video tag.
-                    </video>
+                    <iframe
+                      src={`https://drive.google.com/file/d/${selectedVideo.driveId}/preview`}
+                      allow="autoplay; fullscreen"
+                      allowFullScreen
+                      title={selectedVideo.title}
+                      sandbox="allow-scripts allow-same-origin"
+                    />
+                    {/* Overlay to block Google Drive redirect buttons */}
+                    <div className="video-overlay-top"></div>
+                    <div className="video-overlay-bottom"></div>
                   </div>
 
                   <div className="video-info-panel">
                     <h3>{selectedVideo.title}</h3>
                     <div className="video-meta">
-                      <span>📅 {selectedVideo.date}</span>
+                      <span>📅 {formatClassDate(selectedVideo.date)}</span>
                       <span>⏱️ {selectedVideo.duration}</span>
                       <span>👨‍🏫 {selectedVideo.instructor}</span>
-                    </div>
-                    <p className="video-description">{selectedVideo.description}</p>
-                    <div className="video-topics">
-                      <h4>Topics Covered:</h4>
-                      <div className="topics-list">
-                        {selectedVideo.topics.map((topic, index) => (
-                          <span key={index} className="topic-tag">{topic}</span>
-                        ))}
-                      </div>
                     </div>
                   </div>
                 </div>
               ) : (
-                /* Video List View */
-                <div className="classroom-content">
-                  <div className="classroom-stats">
-                    <div className="stat-box">
-                      <span className="stat-icon">🎬</span>
-                      <div className="stat-info">
-                        <h4>{classroomVideos.length}</h4>
-                        <p>Total Sessions</p>
-                      </div>
-                    </div>
-                    <div className="stat-box">
-                      <span className="stat-icon">⏱️</span>
-                      <div className="stat-info">
-                        <h4>5h 15m</h4>
-                        <p>Total Duration</p>
-                      </div>
-                    </div>
-                    <div className="stat-box">
-                      <span className="stat-icon">📚</span>
-                      <div className="stat-info">
-                        <h4>Module 1-3</h4>
-                        <p>Covered Topics</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="videos-grid">
-                    {classroomVideos.map((video) => (
-                      <div 
-                        key={video.id} 
-                        className="video-card"
-                        onClick={() => setSelectedVideo(video)}
-                      >
-                        <div className="video-thumbnail">
-                          <span className="play-icon">▶️</span>
-                          <span className="duration-badge">{video.duration}</span>
+                /* Class List View */
+                <div className="classroom-timeline">
+                  {Object.keys(groupedSessions)
+                    .sort((a, b) => new Date(b) - new Date(a))
+                    .map((date) => (
+                      <div key={date} className="date-group">
+                        <div className="date-header">
+                          <div className="date-line"></div>
+                          <span className="date-text">{formatClassDate(date)}</span>
                         </div>
-                        <div className="video-card-content">
-                          <h4>{video.title}</h4>
-                          <p className="video-date">📅 {video.date}</p>
-                          <p className="video-desc">{video.description}</p>
-                          <div className="video-topics-preview">
-                            {video.topics.slice(0, 2).map((topic, idx) => (
-                              <span key={idx} className="mini-topic">{topic}</span>
-                            ))}
-                            {video.topics.length > 2 && (
-                              <span className="mini-topic">+{video.topics.length - 2} more</span>
-                            )}
+                        
+                        {groupedSessions[date].map((session) => (
+                          <div key={session.id} className="class-session-card">
+                            <div className="session-type-badge">{session.type}</div>
+                            
+                            <div className="session-main">
+                              <div className="session-left">
+                                <h3 className="session-title">{session.title}</h3>
+                                
+                                <div className="session-details">
+                                  <div className="detail-item instructor">
+                                    <span className="detail-label">INSTRUCTOR</span>
+                                    <div className="instructor-info">
+                                      <span 
+                                        className="instructor-avatar" 
+                                        style={{ backgroundColor: session.instructorColor }}
+                                      >
+                                        {session.instructorInitial}
+                                      </span>
+                                      <span className="instructor-name">{session.instructor}</span>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="detail-item">
+                                    <span className="detail-label">DURATION</span>
+                                    <div className="detail-value">
+                                      <span className="detail-icon">⏱️</span>
+                                      {session.duration}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div className="session-right">
+                                <div className="session-actions">
+                                  <button 
+                                    className="btn-recording"
+                                    onClick={() => setSelectedVideo(session)}
+                                  >
+                                    Recording
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <button className="watch-btn">Watch Now</button>
+                        ))}
                       </div>
                     ))}
-                  </div>
-
-                  <div className="classroom-info-box">
-                    <h4>📢 Note for Students</h4>
-                    <p>New class recordings are added within 24 hours after each live session. Make sure to watch and take notes!</p>
-                  </div>
                 </div>
               )}
+
+              <div className="classroom-info-box">
+                <h4>📢 Note for Students</h4>
+                <p>New class recordings are added within 24 hours after each live session. Click on "Recording" to watch the class.</p>
+              </div>
             </div>
           )}
         </div>
