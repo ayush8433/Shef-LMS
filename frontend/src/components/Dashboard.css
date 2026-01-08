@@ -4446,3 +4446,229 @@
     font-size: 36px;
   }
 }
+
+/* Live Classes Section */
+.live-classes-section {
+  padding: 30px;
+}
+
+.live-classes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 24px;
+  margin-top: 20px;
+}
+
+.live-class-card {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s, box-shadow 0.2s;
+  position: relative;
+  border: 2px solid transparent;
+}
+
+.live-class-card.upcoming {
+  border-color: #4CAF50;
+  background: linear-gradient(135deg, #ffffff 0%, #f1f8f4 100%);
+}
+
+.live-class-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.today-badge {
+  position: absolute;
+  top: -10px;
+  right: 20px;
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);
+  color: white;
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 12px rgba(255, 82, 82, 0.3);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 4px 12px rgba(255, 82, 82, 0.3);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(255, 82, 82, 0.5);
+  }
+}
+
+.class-header {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.class-header h4 {
+  margin: 0 0 10px 0;
+  font-size: 20px;
+  color: #2c3e50;
+  font-weight: 700;
+}
+
+.course-tag {
+  display: inline-block;
+  padding: 6px 14px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.class-details {
+  margin-bottom: 20px;
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #555;
+  font-size: 14px;
+}
+
+.detail-row .icon {
+  font-size: 18px;
+  width: 24px;
+}
+
+.detail-row.time-until {
+  background: #fff3cd;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-top: 12px;
+  border-left: 3px solid #ffc107;
+}
+
+.detail-row.time-until .highlight {
+  color: #d68000;
+  font-weight: 700;
+}
+
+.class-description {
+  margin: 16px 0;
+  color: #666;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 8px;
+  border-left: 3px solid #4CAF50;
+}
+
+.join-class-btn {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  color: white;
+  text-align: center;
+  text-decoration: none;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 16px;
+  transition: all 0.3s;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+}
+
+.join-class-btn:hover {
+  background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+  box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+  transform: translateY(-2px);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.empty-state .empty-icon {
+  font-size: 64px;
+  margin-bottom: 20px;
+  opacity: 0.5;
+}
+
+.empty-state p {
+  color: #888;
+  font-size: 16px;
+  margin: 10px 0;
+}
+
+.empty-state .empty-note {
+  color: #999;
+  font-size: 14px;
+  font-style: italic;
+}
+
+.past-classes-list {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.past-class-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.2s;
+}
+
+.past-class-item:last-child {
+  border-bottom: none;
+}
+
+.past-class-item:hover {
+  background: #f9f9f9;
+}
+
+.past-class-info h4 {
+  margin: 0 0 6px 0;
+  font-size: 16px;
+  color: #2c3e50;
+}
+
+.past-date {
+  font-size: 13px;
+  color: #888;
+}
+
+.completed-badge {
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .live-classes-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .past-class-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}

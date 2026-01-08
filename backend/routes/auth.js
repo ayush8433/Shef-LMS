@@ -6,6 +6,8 @@ const { db } = require('../config/firebase');
 
 // Demo Credentials
 // Student: lqdeleon@gmail.com / Admin@123
+// Student: abhi@gmail.com / Admin@123
+// Teacher: teacher@sheflms.com / Teacher@123
 // Admin: admin@sheflms.com / SuperAdmin@123
 
 // @route   POST /api/auth/register
@@ -127,6 +129,28 @@ router.post('/login', async (req, res) => {
       );
 
       return res.json({ token, user: demoUser });
+    }
+
+    // Check for demo teacher credentials - Data Science
+    if (email === 'teacher@sheflms.com' && password === 'Teacher@123') {
+      const teacherUser = {
+        id: 'teacher_datascience_id',
+        name: 'Dr. Sarah Johnson',
+        email: 'teacher@sheflms.com',
+        role: 'teacher',
+        assignedCourses: ['Data Science & AI', 'Machine Learning'],
+        department: 'Data Science',
+        lastLogin: loginInfo
+      };
+
+      const payload = { user: teacherUser };
+      const token = jwt.sign(
+        payload,
+        process.env.JWT_SECRET || 'shef_lms_secret_key_2025',
+        { expiresIn: '7d' }
+      );
+
+      return res.json({ token, user: teacherUser });
     }
 
     // Check for demo admin credentials

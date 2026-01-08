@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { db } = require('./config/firebase');
+const { startRecordingSync } = require('./jobs/syncRecordings');
 
 dotenv.config();
 
@@ -36,6 +37,9 @@ app.use('/api/courses', require('./routes/courses'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/content', require('./routes/content'));
+app.use('/api/zoom', require('./routes/zoom'));
+app.use('/api/teacher', require('./routes/teacher'));
+app.use('/api/batches', require('./routes/batches'));
 
 // Health check & API root
 app.get('/api', (req, res) => {
@@ -50,4 +54,7 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  
+  // Start Zoom recording sync scheduler
+  startRecordingSync();
 });

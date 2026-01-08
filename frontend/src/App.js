@@ -32,12 +32,6 @@ function App() {
     setUser(null);
   };
 
-  // Determine dashboard route based on user role
-  const getDashboardRoute = () => {
-    if (!isAuthenticated) return '/login';
-    return user?.role === 'admin' ? '/admin' : '/dashboard';
-  };
-
   return (
     <Router>
       <div className="App">
@@ -45,17 +39,21 @@ function App() {
           <Route 
             path="/login" 
             element={
-              isAuthenticated ? 
-              <Navigate to={getDashboardRoute()} /> : 
-              <Login onLogin={handleLogin} />
+              !isAuthenticated ? 
+              <Login onLogin={handleLogin} /> :
+              user?.role === 'admin' ? 
+              <Navigate to="/admin" replace /> : 
+              <Navigate to="/dashboard" replace />
             } 
           />
           <Route 
             path="/dashboard" 
             element={
-              isAuthenticated && user?.role === 'student' ? 
+              isAuthenticated && user?.role !== 'admin' ? 
               <Dashboard user={user} onLogout={handleLogout} /> : 
-              <Navigate to="/login" />
+              !isAuthenticated ?
+              <Navigate to="/login" replace /> :
+              <Navigate to="/admin" replace />
             } 
           />
           <Route 
@@ -63,12 +61,20 @@ function App() {
             element={
               isAuthenticated && user?.role === 'admin' ? 
               <AdminDashboard user={user} onLogout={handleLogout} /> : 
-              <Navigate to="/login" />
+              !isAuthenticated ?
+              <Navigate to="/login" replace /> :
+              <Navigate to="/dashboard" replace />
             } 
           />
           <Route 
             path="/" 
-            element={<Navigate to={getDashboardRoute()} />} 
+            element={
+              !isAuthenticated ? 
+              <Navigate to="/login" replace /> :
+              user?.role === 'admin' ? 
+              <Navigate to="/admin" replace /> : 
+              <Navigate to="/dashboard" replace />
+            } 
           />
         </Routes>
       </div>

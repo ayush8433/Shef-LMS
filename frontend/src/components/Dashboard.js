@@ -12,6 +12,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [jobs, setJobs] = useState([]);
   const [mentors, setMentors] = useState([]);
   const [lessons, setLessons] = useState([]);
+  const [liveClasses, setLiveClasses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -28,6 +29,9 @@ const Dashboard = ({ user, onLogout }) => {
   // Progress tracking state
   const [viewedFiles, setViewedFiles] = useState([]);
   const [progressPercent, setProgressPercent] = useState(0);
+  
+  // Classroom videos from Firebase
+  const [classroomVideos, setClassroomVideos] = useState([]);
 
   // Toggle module expansion
   const toggleModule = (moduleId) => {
@@ -95,6 +99,47 @@ const Dashboard = ({ user, onLogout }) => {
     setProgressPercent(newProgress);
   }, [calculateProgress]);
 
+  // Load classroom videos from Firebase
+  const loadClassroomVideos = useCallback(async () => {
+    try {
+      const result = await firebaseService.getAll(COLLECTIONS.CLASSROOM);
+      if (result.success) {
+        // Filter videos based on user's course
+        const courseName = user?.currentCourse || '';
+        const isDataScienceCourse = courseName.toLowerCase().includes('data science') || 
+                                    courseName.toLowerCase().includes('ai');
+        
+        const filteredVideos = result.data.filter(video => {
+          const videoCourseLower = (video.courseType || '').toLowerCase();
+          if (isDataScienceCourse) {
+            return videoCourseLower.includes('data science') || videoCourseLower.includes('ai');
+          } else {
+            return videoCourseLower.includes('cyber') || videoCourseLower.includes('security');
+          }
+        });
+        
+        // Sort by date, newest first
+        const sortedVideos = filteredVideos.sort((a, b) => {
+          return new Date(b.date) - new Date(a.date);
+        });
+        
+        setClassroomVideos(sortedVideos);
+      } else {
+        setClassroomVideos([]);
+      }
+    } catch (error) {
+      console.error('Error loading classroom videos:', error);
+      setClassroomVideos([]);
+    }
+  }, [user?.currentCourse]);
+
+  // Load classroom videos on mount and when course changes
+  useEffect(() => {
+    if (user?.currentCourse) {
+      loadClassroomVideos();
+    }
+  }, [user?.currentCourse, loadClassroomVideos]);
+
   // Load user progress on mount
   useEffect(() => {
     loadUserProgress();
@@ -105,7 +150,7 @@ const Dashboard = ({ user, onLogout }) => {
     const slug = getCourseSlug();
     setContentLoading(true);
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://learnwithshef.com/api';
+      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000/api' : '/api';
       const response = await fetch(`${apiUrl}/content/${slug}`);
       const data = await response.json();
       if (data.success) {
@@ -155,83 +200,21 @@ const Dashboard = ({ user, onLogout }) => {
     return courseName.toLowerCase().includes('data science') || courseName.toLowerCase().includes('ai');
   };
 
-  // Classroom - Live Class Sessions for CYBERSECURITY (sorted by date, newest first)
-  const cyberClassroomSessions = [
-    {
-      id: 1,
-      date: '2025-11-23',
-      title: 'IP Addressing & Subnetting',
-      type: 'Live Class',
-      instructor: 'Shubham',
-      instructorInitial: 'S',
-      instructorColor: '#E91E63',
-      duration: '1 hour 56 min',
-      driveId: '1Yb-ndaqMLbmAyMqJ0Knhjdj4YrgGzHV5'
-    },
-    {
-      id: 2,
-      date: '2025-11-22',
-      title: 'IP Address',
-      type: 'Live Class',
-      instructor: 'Shubham',
-      instructorInitial: 'S',
-      instructorColor: '#E91E63',
-      duration: '1 hour 51 min',
-      driveId: '1Ta5P35aWj4vyi6OPMiBk-1pA6BX8NrYW'
-    },
-    {
-      id: 3,
-      date: '2025-11-16',
-      title: 'Ports & Protocols',
-      type: 'Live Class',
-      instructor: 'Shubham',
-      instructorInitial: 'S',
-      instructorColor: '#E91E63',
-      duration: '2 hours 07 min',
-      driveId: '1Ewl8ZVOB9g-4VrH9ZA97CcLxDDdbibQz'
-    },
-    {
-      id: 4,
-      date: '2025-11-15',
-      title: 'Ports & Protocols',
-      type: 'Live Class',
-      instructor: 'Shubham',
-      instructorInitial: 'S',
-      instructorColor: '#E91E63',
-      duration: '1 hour 49 min',
-      driveId: '1pn6h4EGyWK-c5sPCkTMaJiFLXUFvpOWP'
-    },
-    {
-      id: 5,
-      date: '2025-11-09',
-      title: 'Phases of Ethical Hacking',
-      type: 'Live Class',
-      instructor: 'Shubham',
-      instructorInitial: 'S',
-      instructorColor: '#E91E63',
-      duration: '1 hour 47 min',
-      driveId: '18r_lBdxphW8fGzF4aLuRrzpSeCSSxVgg'
-    },
-    {
-      id: 6,
-      date: '2025-11-08',
-      title: 'Phases of Ethical Hacking, Security & Risk Management',
-      type: 'Live Class',
-      instructor: 'Shubham',
-      instructorInitial: 'S',
-      instructorColor: '#E91E63',
-      duration: '1 hour 59 min',
-      driveId: '1SBjP2SNFJgvXDa2z1ho2vBKmUewO0NUp'
-    }
-  ];
-
-  // Classroom - Live Class Sessions for DATA SCIENCE (placeholder - no videos yet)
-  const dsClassroomSessions = [
-    // No videos added yet for Data Science
-  ];
-
-  // Get classroom sessions based on user's course
-  const classroomSessions = isDataScience() ? dsClassroomSessions : cyberClassroomSessions;
+  // Use classroom videos from Firebase (already filtered by course)
+  const classroomSessions = classroomVideos.map((video, index) => ({
+    id: video.id || `video-${index}`,
+    date: video.date || new Date().toISOString().split('T')[0],
+    title: video.title || 'Untitled Class',
+    type: video.type || 'Live Class',
+    instructor: video.instructor || 'Instructor',
+    instructorInitial: (video.instructor || 'I').charAt(0).toUpperCase(),
+    instructorColor: video.instructorColor || '#E91E63',
+    duration: video.duration || 'N/A',
+    driveId: video.driveId || '',
+    videoUrl: video.videoUrl || '', // Zoom recording URL
+    source: video.source || 'drive', // 'drive' or 'zoom'
+    downloadUrl: video.downloadUrl || '' // Zoom download URL
+  }));
 
   // Helper function to format date like "Fri 29 Nov"
   const formatClassDate = (dateStr) => {
@@ -850,14 +833,15 @@ const Dashboard = ({ user, onLogout }) => {
       const startTime = Date.now();
       
       // Fetch all data from Firebase
-      const [coursesRes, modulesRes, lessonsRes, projectsRes, jobsRes, mentorsRes, contentRes] = await Promise.all([
+      const [coursesRes, modulesRes, lessonsRes, projectsRes, jobsRes, mentorsRes, contentRes, liveClassesRes] = await Promise.all([
         firebaseService.getAll(COLLECTIONS.COURSES),
         firebaseService.getAll(COLLECTIONS.MODULES),
         firebaseService.getAll(COLLECTIONS.LESSONS),
         firebaseService.getAll(COLLECTIONS.PROJECTS),
         firebaseService.getAll(COLLECTIONS.JOBS),
         firebaseService.getAll(COLLECTIONS.MENTORS),
-        firebaseService.getAll(COLLECTIONS.CONTENT)
+        firebaseService.getAll(COLLECTIONS.CONTENT),
+        firebaseService.getAll(COLLECTIONS.LIVE_CLASSES)
       ]);
 
       // Extract data
@@ -868,6 +852,7 @@ const Dashboard = ({ user, onLogout }) => {
       const jobsData = jobsRes.success ? jobsRes.data : [];
       const mentorsData = mentorsRes.success ? mentorsRes.data : [];
       const contentData = contentRes.success ? contentRes.data : [];
+      const liveClassesData = liveClassesRes.success ? liveClassesRes.data : [];
 
       // Calculate stats from real data
       const calculatedStats = {
@@ -908,6 +893,7 @@ const Dashboard = ({ user, onLogout }) => {
       setProjects(projectsData);
       setJobs(jobsData.filter(j => j.status === 'active'));
       setMentors(mentorsData);
+      setLiveClasses(liveClassesData);
       
       // Store additional data for other sections
       window.dashboardData = {
@@ -917,7 +903,8 @@ const Dashboard = ({ user, onLogout }) => {
         projects: projectsData,
         jobs: jobsData,
         mentors: mentorsData,
-        content: contentData
+        content: contentData,
+        liveClasses: liveClassesData
       };
       
       // Ensure loading animation shows for at least 2 seconds
@@ -968,6 +955,14 @@ const Dashboard = ({ user, onLogout }) => {
           >
             <span className="icon">🏠</span>
             <span>Home</span>
+          </button>
+          <button 
+            className={`nav-item ${activeSection === 'liveClasses' ? 'active' : ''}`}
+            onClick={() => { setActiveSection('liveClasses'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
+            title="Live Classes"
+          >
+            <span className="icon">📡</span>
+            <span>Live Classes</span>
           </button>
           <button 
             className={`nav-item ${activeSection === 'classroom' ? 'active' : ''}`}
@@ -2037,6 +2032,176 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
           )}
 
+          {/* Live Classes Section */}
+          {activeSection === 'liveClasses' && (
+            <div className="section live-classes-section">
+              <div className="section-header">
+                <h2>📡 Live Classes</h2>
+                <p className="section-subtitle">Join your scheduled live Zoom sessions</p>
+              </div>
+
+              {(() => {
+                // Filter live classes for user's course
+                const userCourse = user?.currentCourse || '';
+                const filteredClasses = liveClasses.filter(cls => {
+                  if (userCourse.toLowerCase().includes('data science') || userCourse.toLowerCase().includes('ai')) {
+                    return cls.course?.includes('Data Science');
+                  }
+                  if (userCourse.toLowerCase().includes('cyber') || userCourse.toLowerCase().includes('ethical')) {
+                    return cls.course?.includes('Cyber Security');
+                  }
+                  return true; // Show all if course not matched
+                });
+
+                // Separate upcoming and past classes
+                const now = new Date();
+                const upcomingClasses = filteredClasses
+                  .filter(cls => {
+                    const classDateTime = new Date(cls.scheduledDate + ' ' + cls.scheduledTime);
+                    return classDateTime >= now;
+                  })
+                  .sort((a, b) => new Date(a.scheduledDate + ' ' + a.scheduledTime) - new Date(b.scheduledDate + ' ' + b.scheduledTime));
+
+                const pastClasses = filteredClasses
+                  .filter(cls => {
+                    const classDateTime = new Date(cls.scheduledDate + ' ' + cls.scheduledTime);
+                    return classDateTime < now;
+                  })
+                  .sort((a, b) => new Date(b.scheduledDate + ' ' + b.scheduledTime) - new Date(a.scheduledDate + ' ' + a.scheduledTime));
+
+                return (
+                  <>
+                    {/* Upcoming Classes */}
+                    <div className="live-classes-upcoming">
+                      <h3 style={{marginBottom: '20px', color: '#2c3e50'}}>
+                        🔴 Upcoming Sessions
+                      </h3>
+                      
+                      {upcomingClasses.length === 0 ? (
+                        <div className="empty-state">
+                          <div className="empty-icon">📅</div>
+                          <p>No upcoming live classes scheduled yet.</p>
+                          <p className="empty-note">New sessions will be announced soon!</p>
+                        </div>
+                      ) : (
+                        <div className="live-classes-grid">
+                          {upcomingClasses.map(cls => {
+                            const classDateTime = new Date(cls.scheduledDate + ' ' + cls.scheduledTime);
+                            const isToday = classDateTime.toDateString() === new Date().toDateString();
+                            const timeUntil = Math.ceil((classDateTime - now) / (1000 * 60 * 60)); // hours
+
+                            return (
+                              <div key={cls.id} className="live-class-card upcoming">
+                                {isToday && <div className="today-badge">TODAY</div>}
+                                
+                                <div className="class-header">
+                                  <h4>{cls.title}</h4>
+                                  <span className="course-tag">{cls.course}</span>
+                                </div>
+
+                                <div className="class-details">
+                                  <div className="detail-row">
+                                    <span className="icon">📅</span>
+                                    <span>{new Date(cls.scheduledDate).toLocaleDateString('en-US', { 
+                                      weekday: 'long', 
+                                      year: 'numeric', 
+                                      month: 'long', 
+                                      day: 'numeric' 
+                                    })}</span>
+                                  </div>
+                                  <div className="detail-row">
+                                    <span className="icon">⏰</span>
+                                    <span>{cls.scheduledTime} ({cls.duration})</span>
+                                  </div>
+                                  {cls.instructor && (
+                                    <div className="detail-row">
+                                      <span className="icon">👨‍🏫</span>
+                                      <span>{cls.instructor}</span>
+                                    </div>
+                                  )}
+                                  {timeUntil <= 24 && (
+                                    <div className="detail-row time-until">
+                                      <span className="icon">⏳</span>
+                                      <span className="highlight">Starts in {timeUntil} hour{timeUntil !== 1 ? 's' : ''}</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {cls.description && (
+                                  <p className="class-description">{cls.description}</p>
+                                )}
+
+                                <button 
+                                  onClick={async () => {
+                                    try {
+                                      const token = localStorage.getItem('token');
+                                      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+                                      const response = await fetch(`${apiUrl}/api/zoom/join/${cls.id}`, {
+                                        headers: {
+                                          'Authorization': `Bearer ${token}`
+                                        }
+                                      });
+                                      const data = await response.json();
+                                      
+                                      if (data.success && data.joinUrl) {
+                                        // Open Zoom meeting in new tab
+                                        window.open(data.joinUrl, '_blank');
+                                      } else if (cls.zoomLink) {
+                                        // Fallback to direct link
+                                        window.open(cls.zoomLink, '_blank');
+                                      } else {
+                                        alert('Unable to join meeting. Please contact support.');
+                                      }
+                                    } catch (error) {
+                                      console.error('Error joining meeting:', error);
+                                      // Fallback to direct link if API fails
+                                      if (cls.zoomLink) {
+                                        window.open(cls.zoomLink, '_blank');
+                                      }
+                                    }
+                                  }}
+                                  className="join-class-btn"
+                                >
+                                  📡 Join Live Class
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Past Classes */}
+                    {pastClasses.length > 0 && (
+                      <div className="live-classes-past" style={{marginTop: '40px'}}>
+                        <h3 style={{marginBottom: '20px', color: '#2c3e50'}}>
+                          ✅ Past Sessions
+                        </h3>
+                        <div className="past-classes-list">
+                          {pastClasses.slice(0, 5).map(cls => (
+                            <div key={cls.id} className="past-class-item">
+                              <div className="past-class-info">
+                                <h4>{cls.title}</h4>
+                                <span className="past-date">
+                                  {new Date(cls.scheduledDate).toLocaleDateString('en-US', { 
+                                    month: 'short', 
+                                    day: 'numeric',
+                                    year: 'numeric'
+                                  })} • {cls.scheduledTime}
+                                </span>
+                              </div>
+                              <span className="completed-badge">Completed</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Classroom Section */}
           {activeSection === 'classroom' && (
             <div className="section classroom-section">
@@ -2064,16 +2229,32 @@ const Dashboard = ({ user, onLogout }) => {
                   </button>
                   
                   <div className="video-player-wrapper">
-                    <iframe
-                      src={`https://drive.google.com/file/d/${selectedVideo.driveId}/preview`}
-                      allow="autoplay; fullscreen"
-                      allowFullScreen
-                      title={selectedVideo.title}
-                      sandbox="allow-scripts allow-same-origin"
-                    />
-                    {/* Overlay to block Google Drive redirect buttons */}
-                    <div className="video-overlay-top"></div>
-                    <div className="video-overlay-bottom"></div>
+                    {selectedVideo.source === 'zoom' && selectedVideo.videoUrl ? (
+                      // Zoom recording player
+                      <iframe
+                        src={selectedVideo.videoUrl}
+                        allow="autoplay; fullscreen"
+                        allowFullScreen
+                        title={selectedVideo.title}
+                        sandbox="allow-scripts allow-same-origin"
+                      />
+                    ) : selectedVideo.driveId ? (
+                      // Google Drive player
+                      <>
+                        <iframe
+                          src={`https://drive.google.com/file/d/${selectedVideo.driveId}/preview`}
+                          allow="autoplay; fullscreen"
+                          allowFullScreen
+                          title={selectedVideo.title}
+                          sandbox="allow-scripts allow-same-origin"
+                        />
+                        {/* Overlay to block Google Drive redirect buttons */}
+                        <div className="video-overlay-top"></div>
+                        <div className="video-overlay-bottom"></div>
+                      </>
+                    ) : (
+                      <div className="no-video-message">Video not available</div>
+                    )}
                   </div>
 
                   <div className="video-info-panel">
@@ -2082,7 +2263,20 @@ const Dashboard = ({ user, onLogout }) => {
                       <span>📅 {formatClassDate(selectedVideo.date)}</span>
                       <span>⏱️ {selectedVideo.duration}</span>
                       <span>👨‍🏫 {selectedVideo.instructor}</span>
+                      {selectedVideo.source === 'zoom' && (
+                        <span>☁️ Zoom Recording</span>
+                      )}
                     </div>
+                    {selectedVideo.source === 'zoom' && selectedVideo.downloadUrl && (
+                      <a 
+                        href={selectedVideo.downloadUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="download-btn"
+                      >
+                        📥 Download Recording
+                      </a>
+                    )}
                   </div>
                 </div>
               ) : (

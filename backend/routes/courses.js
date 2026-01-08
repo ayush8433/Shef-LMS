@@ -1,16 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const Course = require('../models/Course');
+const { db } = require('../config/firebase');
 const auth = require('../middleware/auth');
 
 // @route   GET /api/courses
 // @desc    Get all courses
 router.get('/', async (req, res) => {
   try {
-    // Return demo courses if DB is empty
-    const courses = await Course.find().sort({ createdAt: -1 });
+    // Try to get courses from Firestore
+    const coursesSnapshot = await db.collection('courses').get();
     
-    if (courses.length === 0) {
+    if (coursesSnapshot.empty) {
+      // Return demo courses if DB is empty
       const demoCourses = [
         {
           _id: '1',
@@ -60,6 +61,12 @@ router.get('/', async (req, res) => {
       return res.json(demoCourses);
     }
 
+    // Convert Firestore docs to array
+    const courses = [];
+    coursesSnapshot.forEach(doc => {
+      courses.push({ id: doc.id, ...doc.data() });
+    });
+
     res.json(courses);
   } catch (err) {
     console.error(err.message);
@@ -71,11 +78,11 @@ router.get('/', async (req, res) => {
 // @desc    Get course by ID
 router.get('/:id', async (req, res) => {
   try {
-    const course = await Course.findById(req.params.id);
-    if (!course) {
+    const courseDoc = await db.collection('courses').doc(req.params.id).get();
+    if (!courseDoc.exists) {
       return res.status(404).json({ message: 'Course not found' });
     }
-    res.json(course);
+    res.json({ id: courseDoc.id, ...courseDoc.data() });
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server error');
@@ -86,9 +93,12 @@ router.get('/:id', async (req, res) => {
 // @desc    Create a course
 router.post('/', auth, async (req, res) => {
   try {
-    const newCourse = new Course(req.body);
-    const course = await newCourse.save();
-    res.json(course);
+    const courseData = {
+      ...req.body,
+      createdAt: new Date().toISOString()
+    };
+    const courseRef = await db.collection('courses').add(courseData);
+    res.json({ id: courseRef.id, ...courseData });
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server error');

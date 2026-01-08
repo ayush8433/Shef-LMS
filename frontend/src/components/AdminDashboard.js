@@ -20,6 +20,7 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [jobs, setJobs] = useState([]);
   const [mentors, setMentors] = useState([]);
   const [classroomVideos, setClassroomVideos] = useState([]);
+  const [liveClasses, setLiveClasses] = useState([]);
   const [stats, setStats] = useState({});
   
   // Modal states
@@ -45,7 +46,8 @@ const AdminDashboard = ({ user, onLogout }) => {
         assessmentsRes,
         jobsRes,
         mentorsRes,
-        classroomRes
+        classroomRes,
+        liveClassesRes
       ] = await Promise.all([
         firebaseService.getAll(COLLECTIONS.USERS, [where('role', '==', 'student')]),
         firebaseService.getAll(COLLECTIONS.COURSES),
@@ -55,7 +57,8 @@ const AdminDashboard = ({ user, onLogout }) => {
         firebaseService.getAll(COLLECTIONS.ASSESSMENTS),
         firebaseService.getAll(COLLECTIONS.JOBS),
         firebaseService.getAll(COLLECTIONS.MENTORS),
-        firebaseService.getAll(COLLECTIONS.CLASSROOM)
+        firebaseService.getAll(COLLECTIONS.CLASSROOM),
+        firebaseService.getAll(COLLECTIONS.LIVE_CLASSES)
       ]);
 
       if (studentsRes.success) setStudents(studentsRes.data); else setStudents([]);
@@ -67,6 +70,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       if (jobsRes.success) setJobs(jobsRes.data); else setJobs([]);
       if (mentorsRes.success) setMentors(mentorsRes.data); else setMentors([]);
       if (classroomRes.success) setClassroomVideos(classroomRes.data); else setClassroomVideos([]);
+      if (liveClassesRes.success) setLiveClasses(liveClassesRes.data); else setLiveClasses([]);
 
       // Calculate stats using safe fallbacks
       calculateStats(studentsRes.success ? studentsRes.data : [], coursesRes.success ? coursesRes.data : [], jobsRes.success ? jobsRes.data : []);
@@ -119,7 +123,8 @@ const AdminDashboard = ({ user, onLogout }) => {
       job: { title: '', company: '', location: 'Remote', salary: '', type: 'Full-time', status: 'active', skills: [], description: '' },
       mentor: { name: '', title: '', company: '', experience: '', skills: [], bio: '', email: '', linkedin: '' },
       content: { type: 'announcement', title: '', content: '', targetAudience: 'all', priority: 'normal' },
-      classroom: { title: '', date: '', instructor: '', duration: '', driveId: '', courseType: 'Cyber Security', type: 'Live Class' }
+      classroom: { title: '', date: '', instructor: '', duration: '', driveId: '', courseType: 'Cyber Security', type: 'Live Class' },
+      liveClass: { title: '', course: 'Data Science', scheduledDate: '', scheduledTime: '', duration: '60 mins', instructor: '', meetingType: 'auto', status: 'scheduled', description: '' }
     };
     return defaults[type] || {};
   };
@@ -251,6 +256,57 @@ const AdminDashboard = ({ user, onLogout }) => {
         }
       }
 
+      // Validate live class fields
+      if (modalType === 'liveClass') {
+        if (!formData.title || !formData.course || !formData.scheduledDate || !formData.scheduledTime) {
+          showToast('Please fill in required fields (Title, Course, Date, Time)', 'warning');
+          return;
+        }
+        
+        // Create Zoom meeting if not editing
+        if (!editingItem) {
+          try {
+            // Combine date and time to ISO format for Zoom
+            const startTime = new Date(`${formData.scheduledDate}T${formData.scheduledTime}`).toISOString();
+            const duration = parseInt(formData.duration) || 60;
+            
+            const token = localStorage.getItem('token');
+            const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+            const zoomResponse = await fetch(`${apiUrl}/api/zoom/meetings`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                topic: formData.title,
+                startTime: startTime,
+                duration: duration,
+                agenda: formData.description || '',
+                courseId: formData.course,
+                timezone: 'Asia/Kolkata'
+              })
+            });
+            
+            const zoomData = await zoomResponse.json();
+            
+            if (zoomData.success) {
+              showToast('Zoom meeting created successfully!', 'success');
+              closeModal();
+              await loadAllData();
+              return;
+            } else {
+              showToast('Error creating Zoom meeting: ' + zoomData.message, 'error');
+              return;
+            }
+          } catch (error) {
+            console.error('Error creating Zoom meeting:', error);
+            showToast('Failed to create Zoom meeting. Please try again.', 'error');
+            return;
+          }
+        }
+      }
+
       const collection = {
         student: COLLECTIONS.USERS,
         course: COLLECTIONS.COURSES,
@@ -261,7 +317,8 @@ const AdminDashboard = ({ user, onLogout }) => {
         job: COLLECTIONS.JOBS,
         mentor: COLLECTIONS.MENTORS,
         content: COLLECTIONS.CONTENT,
-        classroom: COLLECTIONS.CLASSROOM
+        classroom: COLLECTIONS.CLASSROOM,
+        liveClass: COLLECTIONS.LIVE_CLASSES
       }[modalType];
 
       let result;
@@ -292,14 +349,59 @@ const AdminDashboard = ({ user, onLogout }) => {
       const result = await firebaseService.delete(collection, id);
       if (result.success) {
         alert('Deleted successfully!');
-        loadAllData();
+        await loadAllData();
       } else {
-        alert('Error: ' + result.error);
+        alert('Failed to delete: ' + result.error);
       }
     }
   };
 
+  // Sync Zoom recordings to classroom
+  const handleSyncRecordings = async () => {
+    try {
+      setSaving(true);
+      showToast('Syncing Zoom recordings...', 'info');
+
+      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+      const response = await fetch(`${apiUrl}/api/zoom/sync-recordings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        showToast(`✅ ${data.message}`, 'success');
+        // Reload classroom data to show new recordings
+        await loadAllData();
+      } else {
+        showToast(`❌ ${data.message}`, 'error');
+      }
+    } catch (error) {
+      console.error('Error syncing recordings:', error);
+      showToast('Failed to sync recordings. Please try again.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleInputChange = (field, value) => {
+    // Special handling for Drive ID - extract ID from full URL if pasted
+    if (field === 'driveId' && value) {
+      // Check if it's a full Google Drive URL
+      const driveUrlPattern = /\/file\/d\/([a-zA-Z0-9_-]+)/;
+      const match = value.match(driveUrlPattern);
+      if (match) {
+        // Extract just the ID from the URL
+        value = match[1];
+      }
+      // Also handle if user pastes URL with /view at the end
+      value = value.replace('/view', '').trim();
+    }
+    
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -364,6 +466,13 @@ const AdminDashboard = ({ user, onLogout }) => {
           >
             <span className="icon">🎥</span>
             <span>Classroom</span>
+          </button>
+          <button 
+            className={`nav-item ${activeSection === 'liveClasses' ? 'active' : ''}`}
+            onClick={() => setActiveSection('liveClasses')}
+          >
+            <span className="icon">📡</span>
+            <span>Live Classes</span>
           </button>
           <button 
             className={`nav-item ${activeSection === 'projects' ? 'active' : ''}`}
@@ -953,6 +1062,102 @@ const AdminDashboard = ({ user, onLogout }) => {
                             </td>
                           </tr>
                         ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Live Classes Section */}
+          {activeSection === 'liveClasses' && (
+            <div className="admin-section">
+              <div className="section-header">
+                <h2>Schedule Live Classes</h2>
+                <div>
+                  <button onClick={handleSyncRecordings} className="btn-sync" style={{marginRight: '10px'}}>
+                    ☁️ Sync Zoom Recordings
+                  </button>
+                  <button onClick={() => openModal('liveClass')} className="btn-add">
+                    ➕ Schedule Live Class
+                  </button>
+                </div>
+              </div>
+
+              <div className="info-box">
+                <p>📡 Schedule live Zoom classes for your students. Zoom meetings are automatically created via API integration.</p>
+                <p><strong>✨ Auto-Generated:</strong> No manual Zoom link needed! Just fill in the details and the system will create a unique Zoom meeting for each class.</p>
+                <p><strong>☁️ Cloud Recordings:</strong> After classes end, click "Sync Zoom Recordings" to automatically fetch and add recordings to the Classroom section.</p>
+              </div>
+
+              <div className="data-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date & Time</th>
+                      <th>Topic</th>
+                      <th>Instructor</th>
+                      <th>Duration</th>
+                      <th>Course</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveClasses.length === 0 ? (
+                      <tr>
+                        <td colSpan="7" style={{textAlign: 'center', padding: '40px', color: '#888'}}>
+                          No live classes scheduled yet. Click "Schedule Live Class" to add your first session.
+                        </td>
+                      </tr>
+                    ) : (
+                      liveClasses
+                        .sort((a, b) => new Date(a.scheduledDate + ' ' + a.scheduledTime) - new Date(b.scheduledDate + ' ' + b.scheduledTime))
+                        .map(liveClass => {
+                          const classDateTime = new Date(liveClass.scheduledDate + ' ' + liveClass.scheduledTime);
+                          const isUpcoming = classDateTime > new Date();
+                          const isPast = classDateTime < new Date();
+                          
+                          return (
+                            <tr key={liveClass.id}>
+                              <td>
+                                <strong>{liveClass.scheduledDate}</strong>
+                                <br />
+                                <span style={{fontSize: '0.85em', color: '#666'}}>{liveClass.scheduledTime}</span>
+                              </td>
+                              <td><strong>{liveClass.title}</strong></td>
+                              <td>
+                                <span className="instructor-badge">{liveClass.instructor}</span>
+                              </td>
+                              <td>{liveClass.duration}</td>
+                              <td>
+                                <span className={`course-badge ${liveClass.course?.includes('Cyber') ? 'cyber' : 'data'}`}>
+                                  {liveClass.course}
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`status-badge ${isPast ? 'completed' : isUpcoming ? 'active' : ''}`}>
+                                  {isPast ? '✅ Completed' : '🔴 Live'}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="action-btns">
+                                  <button onClick={() => openModal('liveClass', liveClass)} className="btn-edit" title="Edit">✏️</button>
+                                  <button onClick={() => handleDelete(COLLECTIONS.LIVE_CLASSES, liveClass.id)} className="btn-delete" title="Delete">🗑️</button>
+                                  <a 
+                                    href={liveClass.zoomLink} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="btn-view"
+                                    title="Join Zoom"
+                                  >
+                                    📡
+                                  </a>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                     )}
                   </tbody>
                 </table>
@@ -1685,13 +1890,13 @@ const AdminDashboard = ({ user, onLogout }) => {
                   />
                   <input
                     type="text"
-                    placeholder="Google Drive Video ID *"
+                    placeholder="Google Drive Video ID or Full URL *"
                     value={formData.driveId || ''}
                     onChange={(e) => handleInputChange('driveId', e.target.value)}
                     required
                   />
                   <small style={{color: '#888', marginTop: '-10px', display: 'block'}}>
-                    Enter the Google Drive file ID (e.g., 1ABCdef123_xyz from the share link)
+                    Paste the full Google Drive URL (e.g., https://drive.google.com/file/d/1ABC.../view) or just the file ID
                   </small>
                   <input
                     type="text"
@@ -1713,11 +1918,11 @@ const AdminDashboard = ({ user, onLogout }) => {
                     onChange={(e) => handleInputChange('date', e.target.value)}
                   />
                   <select
-                    value={formData.course || 'Data Science'}
-                    onChange={(e) => handleInputChange('course', e.target.value)}
+                    value={formData.courseType || 'Cyber Security'}
+                    onChange={(e) => handleInputChange('courseType', e.target.value)}
                   >
-                    <option value="Data Science">Data Science</option>
                     <option value="Cyber Security">Cyber Security</option>
+                    <option value="Data Science">Data Science</option>
                     <option value="Web Development">Web Development</option>
                     <option value="Machine Learning">Machine Learning</option>
                     <option value="General">General</option>
@@ -1732,6 +1937,67 @@ const AdminDashboard = ({ user, onLogout }) => {
                     <option value="demo">Demo</option>
                     <option value="review">Review Session</option>
                   </select>
+                </>
+              )}
+
+              {modalType === 'liveClass' && (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Class Title / Topic *"
+                    value={formData.title || ''}
+                    onChange={(e) => handleInputChange('title', e.target.value)}
+                    required
+                  />
+                  <select
+                    value={formData.course || 'Data Science'}
+                    onChange={(e) => handleInputChange('course', e.target.value)}
+                  >
+                    <option value="">Select Course *</option>
+                    <option value="Data Science">Data Science</option>
+                    <option value="Cyber Security">Cyber Security</option>
+                    <option value="Web Development">Web Development</option>
+                    <option value="Machine Learning">Machine Learning</option>
+                  </select>
+                  <input
+                    type="date"
+                    placeholder="Scheduled Date *"
+                    value={formData.scheduledDate || ''}
+                    onChange={(e) => handleInputChange('scheduledDate', e.target.value)}
+                    required
+                  />
+                  <input
+                    type="time"
+                    placeholder="Scheduled Time *"
+                    value={formData.scheduledTime || ''}
+                    onChange={(e) => handleInputChange('scheduledTime', e.target.value)}
+                    required
+                  />
+                  <select
+                    value={formData.duration || '60 mins'}
+                    onChange={(e) => handleInputChange('duration', e.target.value)}
+                  >
+                    <option value="30 mins">30 mins</option>
+                    <option value="45 mins">45 mins</option>
+                    <option value="60 mins">60 mins</option>
+                    <option value="90 mins">90 mins</option>
+                    <option value="120 mins">2 hours</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Instructor Name"
+                    value={formData.instructor || ''}
+                    onChange={(e) => handleInputChange('instructor', e.target.value)}
+                  />
+                  <textarea
+                    placeholder="Description / Agenda (optional)"
+                    value={formData.description || ''}
+                    onChange={(e) => handleInputChange('description', e.target.value)}
+                    rows="3"
+                  />
+                  <small style={{color: '#28a745', marginTop: '-10px', display: 'block', fontWeight: 'bold'}}>
+                    ✅ Zoom meeting link will be auto-generated when you save
+                  </small>
                 </>
               )}
 
