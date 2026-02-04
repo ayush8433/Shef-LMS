@@ -31,23 +31,40 @@ router.get('/classroom', async (req, res) => {
     
     console.log('🔍 Dashboard Debug - Total videos found:', allVideos.length);
     
+    // Get all batches to map batch names to IDs
+    const batchesSnapshot = await db.collection('batches').get();
+    const batchMap = {};
+    batchesSnapshot.forEach(doc => {
+      const data = doc.data();
+      batchMap[data.name] = doc.id; // Map batch name to ID
+      batchMap[doc.id] = data.name; // Map batch ID to name (for reverse lookup)
+    });
+    
+    console.log('🔍 Dashboard Debug - Batch map:', batchMap);
+    
     // Filter videos based on user's course and batch
     const filteredVideos = allVideos.filter(video => {
-      // Check if video matches user's course
-      const courseMatch = video.course === userCourse;
+      // Check if video matches user's course (support both 'course' and 'courseId' fields)
+      const videoCourse = video.courseId || video.course; // Use courseId if available, fallback to course
+      const courseMatch = videoCourse === userCourse;
       
       // Check batch filtering
       let batchMatch = true;
       if (video.batchId && video.batchId !== '') {
         // Video is assigned to specific batch - check if user is in that batch
-        batchMatch = video.batchId === userBatchId;
+        // Handle both batch ID and batch name scenarios
+        const userBatchActualId = batchMap[userBatchId] || userBatchId; // Convert batch name to ID if needed
+        batchMatch = video.batchId === userBatchActualId;
       }
       // If video.batchId is empty or undefined, video is available to all batches in the course
       
       console.log('🔍 Dashboard Debug - Video filtering:', {
         videoTitle: video.title,
-        videoCourse: video.course,
+        videoCourse: videoCourse,
         videoBatchId: video.batchId,
+        userCourse,
+        userBatchId,
+        userBatchActualId: batchMap[userBatchId] || userBatchId,
         courseMatch,
         batchMatch
       });
@@ -59,10 +76,26 @@ router.get('/classroom', async (req, res) => {
     
     // Sort videos by creation date (newest first)
     const sortedVideos = filteredVideos.sort((a, b) => {
+      // Use createdAt primarily, fallback to date, then to document ID
       const dateA = new Date(a.createdAt || a.date || 0);
       const dateB = new Date(b.createdAt || b.date || 0);
-      return dateB - dateA;
+      
+      console.log('🔍 Dashboard Debug - Sorting:', {
+        videoA: a.title,
+        dateA: dateA,
+        videoB: b.title,
+        dateB: dateB,
+        comparison: dateB - dateA
+      });
+      
+      return dateB - dateA; // Newest first (descending order)
     });
+    
+    console.log('🔍 Dashboard Debug - Sorted videos (first 3):', sortedVideos.slice(0, 3).map(v => ({
+      title: v.title,
+      createdAt: v.createdAt,
+      date: v.date
+    })));
     
     res.json(sortedVideos);
   } catch (error) {

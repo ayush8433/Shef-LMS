@@ -4,7 +4,9 @@ import { firebaseService, COLLECTIONS } from '../services/firebaseService';
 import { where } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
 import { ToastContainer, showToast } from './Toast';
+import TimezoneClocks from './TimezoneClocks';
 import fallbackData from '../data/fallbackData';
+import { YouTubeUtils } from '../utils/youtubeUtils';
 import './AdminDashboard.css';
 
 const AdminDashboard = ({ user, onLogout }) => {
@@ -308,6 +310,14 @@ const AdminDashboard = ({ user, onLogout }) => {
     };
   }, [showModal]);
   const [saving, setSaving] = useState(false);
+
+  // Filter teachers by selected course for batch modal
+  const getFilteredTeachers = useCallback(() => {
+    if (modalType !== 'batch' || !formData.course) {
+      return teachers;
+    }
+    return teachers.filter(teacher => teacher.domain === formData.course);
+  }, [modalType, formData.course, teachers]);
 
   useEffect(() => {
     loadAllData();
@@ -773,15 +783,28 @@ const AdminDashboard = ({ user, onLogout }) => {
       cleanDefaults.email = '';
       cleanDefaults.password = '';
       setFormData(cleanDefaults);
-      // Load batches if course is selected for new student
-      if (type === 'student' && cleanDefaults.course) {
+      // Load batches if course is selected for new student or classroom
+      if ((type === 'student' || type === 'classroom') && cleanDefaults.course) {
         loadBatchesByCourse(cleanDefaults.course);
       }
     } else {
-      setFormData(item);
-      // Load batches if editing student with course
-      if (type === 'student' && item.course) {
-        loadBatchesByCourse(item.course);
+      // For classroom videos, map courseId to course field for the form
+      if (type === 'classroom') {
+        const formData = {
+          ...item,
+          course: item.courseId || item.course // Handle both courseId and course for backward compatibility
+        };
+        setFormData(formData);
+        // Load batches if course is specified
+        if (formData.course) {
+          loadBatchesByCourse(formData.course);
+        }
+      } else {
+        setFormData(item);
+        // Load batches if editing student with course
+        if (type === 'student' && item.course) {
+          loadBatchesByCourse(item.course);
+        }
       }
     }
     
@@ -945,7 +968,8 @@ const AdminDashboard = ({ user, onLogout }) => {
           try {
             // Check if email already exists via API
             const token = localStorage.getItem('token');
-            const teachersResponse = await fetch('/api/admin/teachers', {
+            const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+            const teachersResponse = await fetch(`${apiUrl}/api/admin/teachers`, {
               headers: { 'Authorization': `Bearer ${token}` }
             });
             if (teachersResponse.ok) {
@@ -971,7 +995,7 @@ const AdminDashboard = ({ user, onLogout }) => {
               role: 'teacher'
             };
 
-            const createResponse = await fetch('/api/admin/teachers', {
+            const createResponse = await fetch(`${apiUrl}/api/admin/teachers`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -983,7 +1007,7 @@ const AdminDashboard = ({ user, onLogout }) => {
             if (createResponse.ok) {
               showToast('Teacher created successfully!', 'success');
               closeModal();
-              await loadTeachers();
+              await loadTeachers(true); // Force refresh to bypass cache
             } else {
               const errorData = await createResponse.json();
               showToast('Error: ' + (errorData.message || 'Failed to create teacher'), 'error');
@@ -1011,7 +1035,8 @@ const AdminDashboard = ({ user, onLogout }) => {
           // User should use password reset feature
 
           const token = localStorage.getItem('token');
-          const updateResponse = await fetch(`/api/admin/teachers/${editingItem.id}`, {
+          const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+          const updateResponse = await fetch(`${apiUrl}/api/admin/teachers/${editingItem.id}`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -1023,7 +1048,7 @@ const AdminDashboard = ({ user, onLogout }) => {
           if (updateResponse.ok) {
             showToast('Teacher updated successfully!', 'success');
             closeModal();
-            await loadTeachers();
+            await loadTeachers(true); // Force refresh to bypass cache
           } else {
             const errorData = await updateResponse.json();
             showToast('Error: ' + (errorData.message || 'Failed to update teacher'), 'error');
@@ -1238,14 +1263,13 @@ const AdminDashboard = ({ user, onLogout }) => {
           const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
           
           // Validate YouTube URL is provided
-          if (!formData.youtubeUrl) {
+          if (!formData.youtubeVideoUrl) {
             showToast('YouTube URL is required', 'error');
             return;
           }
           
           // Import YouTube utility
-          const { YouTubeUtils } = require('../utils/youtubeUtils');
-          const videoId = YouTubeUtils.extractVideoId(formData.youtubeUrl);
+          const videoId = YouTubeUtils.extractVideoId(formData.youtubeVideoUrl);
           
           if (!videoId) {
             showToast('Invalid YouTube URL. Please use a valid YouTube video URL.', 'error');
@@ -1255,17 +1279,14 @@ const AdminDashboard = ({ user, onLogout }) => {
           // Create lecture data for manual YouTube URL via API
           const lectureData = {
             title: formData.title,
-            instructor: formData.instructor,
+            instructor: 'Admin', // Default instructor since each batch has assigned teacher
             description: formData.description || '',
-            course: formData.course,
+            courseId: formData.course,
             batchId: formData.batchId || '',
-            domain: formData.domain || '',
-            duration: formData.duration || '',
-            type: formData.type || 'Lecture',
-            date: formData.date || new Date().toISOString().split('T')[0],
+            type: 'Lecture', // Default type since we removed the selection
             videoSource: 'youtube-url',
             youtubeVideoId: videoId,
-            youtubeVideoUrl: formData.youtubeUrl,
+            youtubeVideoUrl: formData.youtubeVideoUrl,
             youtubeEmbedUrl: YouTubeUtils.getEmbedUrl(videoId)
           };
 
@@ -1285,6 +1306,7 @@ const AdminDashboard = ({ user, onLogout }) => {
             showToast('YouTube video added successfully!', 'success');
             closeModal();
             await refreshData('classroom');
+            return; // Prevent generic save logic from executing
           } else {
             showToast('Error: ' + (data.message || 'Failed to save YouTube video'), 'error');
             return;
@@ -1577,15 +1599,17 @@ const AdminDashboard = ({ user, onLogout }) => {
             <span className="icon">📚</span>
             <span>Batches</span>
           </button>
-          {/* Commented out menu items - not needed */}
-          {/* <button 
+          
+          <button 
             className={`nav-item ${activeSection === 'modules' ? 'active' : ''}`}
             onClick={() => setActiveSection('modules')}
           >
             <span className="icon">📖</span>
             <span>Modules</span>
           </button>
-          <button 
+          
+          {/* Commented out menu items - not needed */}
+          {/* <button 
             className={`nav-item ${activeSection === 'lessons' ? 'active' : ''}`}
             onClick={() => setActiveSection('lessons')}
           >
@@ -1695,6 +1719,9 @@ const AdminDashboard = ({ user, onLogout }) => {
             </div>
           </div>
         </header>
+
+        {/* Timezone Clocks */}
+        <TimezoneClocks />
 
         {/* Dashboard Content */}
         <div className="admin-content">
@@ -2188,11 +2215,14 @@ const AdminDashboard = ({ user, onLogout }) => {
                 </button>
               </div>
 
+              {/* Video Instructions - Commented Out */}
+              {/* 
               <div className="info-box">
                 <p>📹 Add live class recordings from Zoom or Google Drive. Students can watch these videos in their Classroom section.</p>
                 <p><strong>Zoom Recording:</strong> Open your recording in Zoom → Click "Share" → Copy the complete shareable link (includes passcode).</p>
                 <p><strong>Google Drive:</strong> Upload video to Drive → Get shareable link → Copy the file ID from the URL.</p>
               </div>
+              */}
 
               <div className="data-table">
                 <table>
@@ -2200,7 +2230,6 @@ const AdminDashboard = ({ user, onLogout }) => {
                     <tr>
                       <th>Date</th>
                       <th>Topic</th>
-                      <th>Instructor</th>
                       <th>Duration</th>
                       <th>Course</th>
                       <th>Video Source</th>
@@ -2210,7 +2239,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                   <tbody>
                     {classroomVideos.length === 0 ? (
                       <tr>
-                        <td colSpan="7" style={{textAlign: 'center', padding: '40px', color: '#888'}}>
+                        <td colSpan="6" style={{textAlign: 'center', padding: '40px', color: '#888'}}>
                           No classroom videos added yet. Click "Add Video" to add your first recording.
                         </td>
                       </tr>
@@ -2221,23 +2250,38 @@ const AdminDashboard = ({ user, onLogout }) => {
                           <tr key={video.id}>
                             <td>{video.date}</td>
                             <td><strong>{video.title}</strong></td>
-                            <td>
-                              <span className="instructor-badge">{video.instructor}</span>
-                            </td>
                             <td>{video.duration}</td>
                             <td>
-                              <span className={`course-badge ${video.courseType?.includes('Cyber') ? 'cyber' : 'data'}`}>
-                                {video.courseType || 'General'}
+                              <span className={`course-badge ${video.courseId?.includes('Cyber') ? 'cyber' : 'data'}`}>
+                                {video.courseId || 'General'}
                               </span>
+                              {video.batchId && (
+                                <small style={{display: 'block', color: '#666', marginTop: '2px'}}>
+                                  Batch: {batches.find(b => b.id === video.batchId)?.name || video.batchId}
+                                </small>
+                              )}
                             </td>
                             <td>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                <span className={`source-badge firebase`}>
-                                  🔥 Firebase
-                                </span>
-                                <code className="drive-id">
-                                  {video.firebaseStoragePath?.substring(0, 25)}...
-                                </code>
+                                {video.videoSource === 'youtube-url' ? (
+                                  <>
+                                    <span className={`source-badge youtube`}>
+                                      📺 YouTube
+                                    </span>
+                                    <code className="drive-id">
+                                      {video.youtubeVideoId}
+                                    </code>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className={`source-badge firebase`}>
+                                      🔥 Firebase
+                                    </span>
+                                    <code className="drive-id">
+                                      {video.firebaseStoragePath?.substring(0, 25)}...
+                                    </code>
+                                  </>
+                                )}
                               </div>
                             </td>
                             <td>
@@ -2270,25 +2314,54 @@ const AdminDashboard = ({ user, onLogout }) => {
                                       background: white;
                                       padding: 20px;
                                       border-radius: 8px;
-                                      max-width: 500px;
+                                      max-width: 600px;
+                                      width: 90%;
                                       text-align: center;
                                     `;
                                     
-                                    content.innerHTML = `
-                                      <h3>🔥 Firebase Storage Video</h3>
-                                      <p><strong>${video.title}</strong></p>
-                                      <p>This video is stored in Firebase Storage and can be played by students in their Dashboard.</p>
-                                      <p style="color: #666; font-size: 14px;">To preview: Go to Student Dashboard → Classroom → Select this video</p>
-                                      <button style="
-                                        background: #007bff;
-                                        color: white;
-                                        border: none;
-                                        padding: 10px 20px;
-                                        border-radius: 4px;
-                                        cursor: pointer;
-                                        margin-top: 15px;
-                                      " onclick="this.closest('div[style*=fixed]').remove()">Close</button>
-                                    `;
+                                    if (video.videoSource === 'youtube-url') {
+                                      content.innerHTML = `
+                                        <h3>📺 YouTube Video</h3>
+                                        <p><strong>${video.title}</strong></p>
+                                        <p>Instructor: ${video.instructor}</p>
+                                        <div style="margin: 20px 0;">
+                                          <iframe 
+                                            width="100%" 
+                                            height="315" 
+                                            src="${video.youtubeEmbedUrl}" 
+                                            frameborder="0" 
+                                            allowfullscreen
+                                            style="border-radius: 8px;"
+                                          ></iframe>
+                                        </div>
+                                        <p style="color: #666; font-size: 14px;">Students can watch this video in their Dashboard → Classroom section</p>
+                                        <button style="
+                                          background: #007bff;
+                                          color: white;
+                                          border: none;
+                                          padding: 10px 20px;
+                                          border-radius: 4px;
+                                          cursor: pointer;
+                                          margin-top: 15px;
+                                        " onclick="this.closest('div[style*=fixed]').remove()">Close</button>
+                                      `;
+                                    } else {
+                                      content.innerHTML = `
+                                        <h3>🔥 Firebase Storage Video</h3>
+                                        <p><strong>${video.title}</strong></p>
+                                        <p>This video is stored in Firebase Storage and can be played by students in their Dashboard.</p>
+                                        <p style="color: #666; font-size: 14px;">To preview: Go to Student Dashboard → Classroom → Select this video</p>
+                                        <button style="
+                                          background: #007bff;
+                                          color: white;
+                                          border: none;
+                                          padding: 10px 20px;
+                                          border-radius: 4px;
+                                          cursor: pointer;
+                                          margin-top: 15px;
+                                        " onclick="this.closest('div[style*=fixed]').remove()">Close</button>
+                                      `;
+                                    }
                                     
                                     modal.appendChild(content);
                                     document.body.appendChild(modal);
@@ -2914,7 +2987,13 @@ const AdminDashboard = ({ user, onLogout }) => {
                   />
                   <select
                     value={formData.course || ''}
-                    onChange={(e) => handleInputChange('course', e.target.value)}
+                    onChange={(e) => {
+                      const course = e.target.value;
+                      handleInputChange('course', course);
+                      // Clear teacher selection when course changes
+                      handleInputChange('teacherId', '');
+                      handleInputChange('teacherName', '');
+                    }}
                     required
                   >
                     <option value="">Select Course *</option>
@@ -2937,14 +3016,16 @@ const AdminDashboard = ({ user, onLogout }) => {
                     value={formData.teacherId || ''}
                     onChange={(e) => {
                       const teacherId = e.target.value;
-                      const selectedTeacher = teachers.find(t => t.id === teacherId);
+                      const selectedTeacher = getFilteredTeachers().find(t => t.id === teacherId);
                       handleInputChange('teacherId', teacherId);
                       handleInputChange('teacherName', selectedTeacher ? selectedTeacher.name : '');
                     }}
                     required
                   >
-                    <option value="">Select Teacher *</option>
-                    {teachers.map(teacher => (
+                    <option value="">
+                      {formData.course ? `Select Teacher for ${formData.course} *` : 'Select Course First *'}
+                    </option>
+                    {getFilteredTeachers().map(teacher => (
                       <option key={teacher.id} value={teacher.id}>
                         {teacher.name}
                       </option>
@@ -3321,52 +3402,14 @@ const AdminDashboard = ({ user, onLogout }) => {
                     onChange={(e) => handleInputChange('title', e.target.value)}
                     required
                   />
-                  <input
-                    type="text"
-                    placeholder="Instructor Name *"
-                    value={formData.instructor || ''}
-                    onChange={(e) => handleInputChange('instructor', e.target.value)}
-                    required
+                  
+                  <textarea
+                    placeholder="Video Description (optional)"
+                    value={formData.description || ''}
+                    onChange={(e) => handleInputChange('description', e.target.value)}
+                    rows={3}
+                    style={{resize: 'vertical', minHeight: '60px', marginBottom: '15px'}}
                   />
-                  
-                  {/* Commented out - Video Source dropdown disabled, only manual YouTube URL */}
-                  {/* <div style={{ marginBottom: '15px' }}>
-                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Video Source *</label>
-                    <select
-                      value={formData.videoSource || 'firebase'}
-                      onChange={(e) => handleInputChange('videoSource', e.target.value)}
-                      style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                    >
-                      <option value="firebase">Firebase Storage</option>
-                      <option value="youtube">YouTube Private Upload</option>
-                      <option value="youtube-url">Manual YouTube URL</option>
-                    </select>
-                  </div> */}
-                  
-                  {/* Manual YouTube URL Input - Only Option */}
-                  <div style={{ marginBottom: '15px' }}>
-                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                      YouTube Video URL *
-                    </label>
-                    <input
-                      type="url"
-                      placeholder="https://www.youtube.com/watch?v=..."
-                      value={formData.youtubeUrl || ''}
-                      onChange={(e) => handleInputChange('youtubeUrl', e.target.value)}
-                      required
-                      style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                    />
-                    <small style={{color: '#888', marginTop: '-10px', display: 'block'}}>
-                      Paste the YouTube video URL. Video should be uploaded as "Private" or "Unlisted" on YouTube.
-                    </small>
-                    <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '4px', border: '1px solid #ffc107' }}>
-                      <strong>📺 Manual YouTube URL:</strong><br/>
-                      • Upload video to YouTube as Private/Unlisted first<br/>
-                      • Copy the YouTube video URL here<br/>
-                      • Students will only see videos for their enrolled course<br/>
-                      • No API configuration needed
-                    </div>
-                  </div>
                   
                   <select
                     value={formData.course || ''}
@@ -3407,52 +3450,30 @@ const AdminDashboard = ({ user, onLogout }) => {
                     Select specific batch or leave empty to make available to all batches in this course
                   </small>
                   
-                  <textarea
-                    placeholder="Video Description (optional)"
-                    value={formData.description || ''}
-                    onChange={(e) => handleInputChange('description', e.target.value)}
-                    rows={3}
-                    style={{resize: 'vertical', minHeight: '60px', marginBottom: '15px'}}
-                  />
-                  
-                  <input
-                    type="text"
-                    placeholder="Domain (optional)"
-                    value={formData.domain || ''}
-                    onChange={(e) => handleInputChange('domain', e.target.value)}
-                    style={{ marginBottom: '15px' }}
-                  />
-                  
-                  <input
-                    type="text"
-                    placeholder="Video Duration (e.g., 1 hr 45 min)"
-                    value={formData.duration || ''}
-                    onChange={(e) => handleInputChange('duration', e.target.value)}
-                  />
-                  <input
-                    type="date"
-                    placeholder="Session Date"
-                    value={formData.date || ''}
-                    onChange={(e) => handleInputChange('date', e.target.value)}
-                  />
-                  <select
-                    value={formData.courseType || 'Data Science & AI'}
-                    onChange={(e) => handleInputChange('courseType', e.target.value)}
-                  >
-                    <option value="Data Science & AI">Data Science & AI</option>
-                    <option value="Cyber Security & Ethical Hacking">Cyber Security & Ethical Hacking</option>
-                  </select>
-                  <select
-                    value={formData.type || 'Live Class'}
-                    onChange={(e) => handleInputChange('type', e.target.value)}
-                  >
-                    <option value="Live Class">Live Class</option>
-                    <option value="Lecture">Lecture</option>
-                    <option value="Workshop">Workshop</option>
-                    <option value="Q&A Session">Q&A Session</option>
-                    <option value="Demo">Demo</option>
-                    <option value="Review Session">Review Session</option>
-                  </select>
+                  {/* Manual YouTube URL Input */}
+                  <div style={{ marginBottom: '15px' }}>
+                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                      YouTube Video URL *
+                    </label>
+                    <input
+                      type="url"
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={formData.youtubeVideoUrl || ''}
+                      onChange={(e) => handleInputChange('youtubeVideoUrl', e.target.value)}
+                      required
+                      style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
+                    />
+                    <small style={{color: '#888', marginTop: '-10px', display: 'block'}}>
+                      Paste the YouTube video URL. Video should be uploaded as "Private" or "Unlisted" on YouTube.
+                    </small>
+                    <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '4px', border: '1px solid #ffc107' }}>
+                      <strong>📺 Manual YouTube URL:</strong><br/>
+                      • Upload video to YouTube as Private/Unlisted first<br/>
+                      • Copy the YouTube video URL here<br/>
+                      • Students will only see videos for their enrolled course<br/>
+                      • No API configuration needed
+                    </div>
+                  </div>
                 </>
               )}
 

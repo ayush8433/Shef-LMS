@@ -3,6 +3,7 @@ import { firebaseService, COLLECTIONS } from '../services/firebaseService';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import CustomVideoPlayer from './CustomVideoPlayer';
+import { YouTubeUtils } from '../utils/youtubeUtils';
 import './Dashboard.css';
 
 const Dashboard = ({ user, onLogout }) => {
@@ -33,6 +34,11 @@ const Dashboard = ({ user, onLogout }) => {
   
   // Classroom videos from Firebase
   const [classroomVideos, setClassroomVideos] = useState([]);
+  
+  // Batches and enhanced video information
+  const [batches, setBatches] = useState([]);
+  const [videoThumbnails, setVideoThumbnails] = useState({});
+  const [videoDurations, setVideoDurations] = useState({});
 
   // Toggle module expansion
   const toggleModule = (moduleId) => {
@@ -162,7 +168,21 @@ const Dashboard = ({ user, onLogout }) => {
         const videos = await response.json();
         console.log('🔍 Frontend Debug - Videos received:', videos.length);
         console.log('🔍 Frontend Debug - Sample video:', videos[0]);
-        setClassroomVideos(videos);
+        
+        // Additional sorting on frontend to ensure latest videos are first
+        const sortedVideos = videos.sort((a, b) => {
+          const dateA = new Date(a.createdAt || a.date || 0);
+          const dateB = new Date(b.createdAt || b.date || 0);
+          return dateB - dateA; // Newest first
+        });
+        
+        console.log('🔍 Frontend Debug - First 3 videos after sorting:', sortedVideos.slice(0, 3).map(v => ({
+          title: v.title,
+          createdAt: v.createdAt,
+          date: v.date
+        })));
+        
+        setClassroomVideos(sortedVideos);
       } else {
         const errorData = await response.json();
         console.error('🔍 Frontend Debug - Error response:', errorData);
@@ -174,12 +194,82 @@ const Dashboard = ({ user, onLogout }) => {
     }
   }, []);
 
+  // Load batches to get teacher information
+  const loadBatches = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const apiUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+      
+      const response = await fetch(`${apiUrl}/api/batches`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const batchesData = data.batches || data; // Handle both response formats
+        setBatches(batchesData);
+        console.log('🔍 Dashboard Debug - Batches loaded:', batchesData);
+      }
+    } catch (error) {
+      console.error('Error loading batches:', error);
+    }
+  }, []);
+
+  // Get teacher name from batch ID
+  const getTeacherName = useCallback((batchId) => {
+    console.log('🔍 Dashboard Debug - Getting teacher for batchId:', batchId);
+    console.log('🔍 Dashboard Debug - Available batches:', batches);
+    
+    if (!batchId || !batches.length) {
+      console.log('🔍 Dashboard Debug - No batchId or batches loaded');
+      return 'Not assigned';
+    }
+    
+    const batch = batches.find(b => b.id === batchId);
+    console.log('🔍 Dashboard Debug - Found batch:', batch);
+    
+    const teacherName = batch?.teacherName || 'Not assigned';
+    console.log('🔍 Dashboard Debug - Teacher name:', teacherName);
+    
+    return teacherName;
+  }, [batches]);
+
+  // Load video thumbnails and durations
+  const loadVideoEnhancements = useCallback(async (videos) => {
+    const thumbnails = {};
+    const durations = {};
+    
+    for (const video of videos) {
+      if (video.videoSource === 'youtube-url' && video.youtubeVideoId) {
+        // Get thumbnail
+        thumbnails[video.id] = YouTubeUtils.getThumbnailUrl(video.youtubeVideoId, 'mqdefault');
+        
+        // For now, use a placeholder duration since we don't have YouTube API key
+        // In the future, you can implement YouTube API call to get actual duration
+        durations[video.id] = video.duration || 'Duration not available';
+      }
+    }
+    
+    setVideoThumbnails(thumbnails);
+    setVideoDurations(durations);
+  }, []);
+
   // Load classroom videos on mount and when course changes
   useEffect(() => {
     if (user?.currentCourse) {
       loadClassroomVideos();
+      loadBatches();
     }
-  }, [user?.currentCourse, loadClassroomVideos]);
+  }, [user?.currentCourse, loadClassroomVideos, loadBatches]);
+
+  // Load video enhancements when videos are loaded
+  useEffect(() => {
+    if (classroomVideos.length > 0) {
+      loadVideoEnhancements(classroomVideos);
+    }
+  }, [classroomVideos, loadVideoEnhancements]);
 
   // Load user progress on mount and when user changes
   useEffect(() => {
@@ -1108,6 +1198,17 @@ const Dashboard = ({ user, onLogout }) => {
             <span className="nav-icon">📡</span>
             <span>Live Classes</span>
           </button> */}
+          
+          {/* Commented out - Learn option disabled */}
+          {/* <button 
+            className={`nav-item ${activeSection === 'courses' ? 'active' : ''}`}
+            onClick={() => { setActiveSection('courses'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
+            title="Learn"
+          >
+            <span className="nav-icon">📖</span>
+            <span>Learn</span>
+          </button> */}
+          
           <button 
             className={`nav-item ${activeSection === 'classroom' ? 'active' : ''}`}
             onClick={() => { setActiveSection('classroom'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
@@ -1119,14 +1220,6 @@ const Dashboard = ({ user, onLogout }) => {
           
           {/* Commented out - Disabled navigation items */}
           {/* 
-          <button 
-            className={`nav-item ${activeSection === 'courses' ? 'active' : ''}`}
-            onClick={() => { setActiveSection('courses'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
-            title="Learn"
-          >
-            <span className="nav-icon">📖</span>
-            <span>Learn</span>
-          </button>
           <button 
             className={`nav-item ${activeSection === 'activity' ? 'active' : ''}`}
             onClick={() => { setActiveSection('activity'); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
@@ -1271,8 +1364,8 @@ const Dashboard = ({ user, onLogout }) => {
                 </div>
               </div>
 
-              {/* Recent Classroom Videos */}
-              {classroomVideos.length > 0 && (
+              {/* Commented out - Recent Classroom Videos section disabled */}
+              {/* {classroomVideos.length > 0 && (
                 <div className="content-section animate-in">
                   <div className="section-header">
                     <div className="section-title">
@@ -1288,21 +1381,63 @@ const Dashboard = ({ user, onLogout }) => {
                         className="video-card"
                         onClick={() => setSelectedVideo(video)}
                       >
-                        <div className="video-thumbnail">
-                          {video.videoSource === 'youtube-url' ? '📺' : '🎥'}
+                        <div className="video-thumbnail" style={{ position: 'relative', overflow: 'hidden' }}>
+                          {video.videoSource === 'youtube-url' && videoThumbnails[video.id] ? (
+                            <img 
+                              src={videoThumbnails[video.id]} 
+                              alt={video.title}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover'
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          
+                          <div style={{
+                            display: video.videoSource === 'youtube-url' && videoThumbnails[video.id] ? 'none' : 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '100%',
+                            fontSize: '24px'
+                          }}>
+                            {video.videoSource === 'youtube-url' ? '📺' : '🎥'}
+                          </div>
+                          
+                          {videoDurations[video.id] && videoDurations[video.id] !== 'Duration not available' && (
+                            <div style={{
+                              position: 'absolute',
+                              bottom: '4px',
+                              right: '4px',
+                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                              color: 'white',
+                              padding: '1px 4px',
+                              borderRadius: '2px',
+                              fontSize: '10px',
+                              fontWeight: 'bold'
+                            }}>
+                              {videoDurations[video.id]}
+                            </div>
+                          )}
                         </div>
                         <div className="video-info">
                           <div className="video-title">{video.title}</div>
                           <div className="video-meta">
-                            <span>👨‍🏫 {video.instructor}</span>
-                            <span>⏱️ {video.duration}</span>
+                            <span>👨‍🏫 {getTeacherName(video.batchId)}</span>
+                            {videoDurations[video.id] && videoDurations[video.id] !== 'Duration not available' && (
+                              <span>⏱️ {videoDurations[video.id]}</span>
+                            )}
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
+              )} */}
 
               {/* Quick Actions */}
               <div className="content-section animate-in">
@@ -1383,22 +1518,63 @@ const Dashboard = ({ user, onLogout }) => {
                         style={{ cursor: 'pointer' }}
                         onClick={() => setSelectedVideo(video)}
                       >
+                        {/* Video Thumbnail */}
                         <div style={{ 
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                          position: 'relative',
                           borderRadius: '12px',
-                          padding: '20px',
+                          overflow: 'hidden',
                           marginBottom: '15px',
-                          textAlign: 'center',
-                          color: 'white'
+                          height: '180px',
+                          backgroundColor: '#f7fafc'
                         }}>
-                          <div style={{ fontSize: '48px', marginBottom: '10px' }}>
+                          {video.videoSource === 'youtube-url' && videoThumbnails[video.id] ? (
+                            <img 
+                              src={videoThumbnails[video.id]} 
+                              alt={video.title}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                borderRadius: '12px'
+                              }}
+                              onError={(e) => {
+                                // Fallback to placeholder if thumbnail fails
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          
+                          {/* Fallback placeholder */}
+                          <div style={{
+                            display: video.videoSource === 'youtube-url' && videoThumbnails[video.id] ? 'none' : 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '100%',
+                            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            color: 'white',
+                            fontSize: '48px'
+                          }}>
                             {video.videoSource === 'youtube-url' ? '📺' : 
                              video.videoSource === 'youtube' ? '📺' : '🎥'}
                           </div>
-                          <div style={{ fontSize: '12px', opacity: 0.9 }}>
-                            {video.videoSource === 'youtube-url' ? 'YouTube Video' :
-                             video.videoSource === 'youtube' ? 'YouTube Upload' : 'Classroom Recording'}
-                          </div>
+                          
+                          {/* Duration badge */}
+                          {videoDurations[video.id] && videoDurations[video.id] !== 'Duration not available' && (
+                            <div style={{
+                              position: 'absolute',
+                              bottom: '8px',
+                              right: '8px',
+                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                              color: 'white',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              fontWeight: 'bold'
+                            }}>
+                              {videoDurations[video.id]}
+                            </div>
+                          )}
                         </div>
                         
                         <h3 style={{ 
@@ -1418,28 +1594,15 @@ const Dashboard = ({ user, onLogout }) => {
                           lineHeight: '1.5'
                         }}>
                           <div style={{ marginBottom: '8px' }}>
-                            <strong>👨‍🏫 Instructor:</strong> {video.instructor || 'Not specified'}
+                            <strong>👨‍🏫 Teacher:</strong> {getTeacherName(video.batchId)}
                           </div>
-                          <div style={{ marginBottom: '8px' }}>
-                            <strong>⏱️ Duration:</strong> {video.duration || 'Not specified'}
-                          </div>
+                          {videoDurations[video.id] && videoDurations[video.id] !== 'Duration not available' && (
+                            <div style={{ marginBottom: '8px' }}>
+                              <strong>⏱️ Duration:</strong> {videoDurations[video.id]}
+                            </div>
+                          )}
                           <div style={{ marginBottom: '8px' }}>
                             <strong>📅 Date:</strong> {new Date(video.date || video.createdAt).toLocaleDateString()}
-                          </div>
-                          <div>
-                            <strong>🎬 Source:</strong> 
-                            <span style={{ 
-                              marginLeft: '5px',
-                              padding: '2px 8px',
-                              borderRadius: '12px',
-                              fontSize: '12px',
-                              background: video.videoSource === 'youtube-url' ? '#ff6b6b' :
-                                           video.videoSource === 'youtube' ? '#4ecdc4' : '#667eea',
-                              color: 'white'
-                            }}>
-                              {video.videoSource === 'youtube-url' ? 'YouTube' :
-                               video.videoSource === 'youtube' ? 'YouTube' : 'Firebase'}
-                            </span>
                           </div>
                         </div>
                         
